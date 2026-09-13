@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { isOwner } from "@/lib/auth/authorization";
-import { createAdminClient, createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 
 const createSchema = z.object({
   email: z.email().trim().toLowerCase(),
@@ -27,33 +27,42 @@ async function requireOwner() {
   return user && isOwner(user) ? user : null;
 }
 
-function sanitizedUser(user: {
+type ManagedUser = {
   id: string;
-  email?: string;
+  email: string;
+  display_name: string | null;
+  role: "owner" | "guest";
   created_at: string;
-  last_sign_in_at?: string;
-  app_metadata?: Record<string, unknown>;
-  user_metadata?: Record<string, unknown>;
-}) {
+  last_sign_in_at: string | null;
+};
+
+function sanitizedUser(user: ManagedUser) {
   return {
     id: user.id,
-    email: user.email ?? "",
-    displayName: typeof user.user_metadata?.display_name === "string" ? user.user_metadata.display_name : null,
-    role: user.app_metadata?.role === "owner" ? "owner" : "guest",
+    email: user.email,
+    displayName: user.display_name,
+    role: user.role,
     createdAt: user.created_at,
-    lastSignInAt: user.last_sign_in_at ?? null,
+    lastSignInAt: user.last_sign_in_at,
   };
+}
+
+async function callOwnerRpc<T>(name: string, args?: Record<string, unknown>) {
+  const supabase = await createClient();
+  const client = supabase as unknown as {
+    rpc: (fn: string, params?: Record<string, unknown>) => Promise<{ data: T; error: { message: string } | null }>;
+  };
+  return client.rpc(name, args);
 }
 
 export async function GET() {
   const owner = await requireOwner();
   if (!owner) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
-  const admin = createAdminClient();
-  const { data, error } = await admin.auth.admin.listUsers({ page: 1, perPage: 100 });
+  const { data, error } = await callOwnerRpc<ManagedUser[]>("owner_list_auth_users");
   if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-  return NextResponse.json({ users: data.users.map(sanitizedUser) });
+  return NextResponse.json({ users: (data ?? []).map(sanitizedUser) });
 }
 
 export async function POST(request: NextRequest) {
@@ -64,23 +73,15 @@ export async function POST(request: NextRequest) {
   if (!parsed.success) return NextResponse.json({ error: "Enter a valid email and a password of at least 12 characters." }, { status: 400 });
 
   const password = parsed.data.password ?? generatePassword();
-  const admin = createAdminClient();
-  const { data, error } = await admin.auth.admin.createUser({
-    email: parsed.data.email,
-    password,
-    email_confirm: true,
-    app_metadata: { role: "guest" },
-    user_metadata: { display_name: parsed.data.displayName || undefined },
+  const { data, error } = await callOwnerRpc<ManagedUser[]>("owner_create_guest", {
+    p_email: parsed.data.email,
+    p_password: password,
+    p_display_name: parsed.data.displayName || null,
   });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  await admin.from("audit_events").insert({
-    actor: owner.email ?? owner.id,
-    action: "guest_created",
-    metadata: { guest_user_id: data.user.id, guest_email: data.user.email },
-  });
-
-  return NextResponse.json({ user: sanitizedUser(data.user), credential: { email: data.user.email, password } }, { status: 201 });
+  const user = data?.[0];
+  if (!user) return NextResponse.json({ error: "Guest account was not returned." }, { status: 500 });
+  return NextResponse.json({ user: sanitizedUser(user), credential: { email: user.email, password } }, { status: 201 });
 }
 
 export async function PATCH(request: NextRequest) {
@@ -90,22 +91,13 @@ export async function PATCH(request: NextRequest) {
   const parsed = resetSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "Invalid password reset request." }, { status: 400 });
 
-  const admin = createAdminClient();
-  const { data: existing, error: lookupError } = await admin.auth.admin.getUserById(parsed.data.userId);
-  if (lookupError || !existing.user) return NextResponse.json({ error: "Guest not found." }, { status: 404 });
-  if (existing.user.app_metadata?.role === "owner") return NextResponse.json({ error: "The owner password cannot be reset here." }, { status: 400 });
-
   const password = parsed.data.password ?? generatePassword();
-  const { data, error } = await admin.auth.admin.updateUserById(parsed.data.userId, { password });
-  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  await admin.from("audit_events").insert({
-    actor: owner.email ?? owner.id,
-    action: "guest_password_reset",
-    metadata: { guest_user_id: data.user.id, guest_email: data.user.email },
+  const { data: email, error } = await callOwnerRpc<string>("owner_reset_guest_password", {
+    p_user_id: parsed.data.userId,
+    p_password: password,
   });
-
-  return NextResponse.json({ credential: { email: data.user.email, password } });
+  if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+  return NextResponse.json({ credential: { email, password } });
 }
 
 export async function DELETE(request: NextRequest) {
@@ -115,22 +107,7 @@ export async function DELETE(request: NextRequest) {
   const parsed = deleteSchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "Invalid guest deletion request." }, { status: 400 });
 
-  const admin = createAdminClient();
-  const { data: existing, error: lookupError } = await admin.auth.admin.getUserById(parsed.data.userId);
-  if (lookupError || !existing.user) return NextResponse.json({ error: "Guest not found." }, { status: 404 });
-  if (existing.user.id === owner.id || existing.user.app_metadata?.role === "owner") {
-    return NextResponse.json({ error: "The owner account cannot be deleted." }, { status: 400 });
-  }
-
-  const guestEmail = existing.user.email;
-  const { error } = await admin.auth.admin.deleteUser(parsed.data.userId);
+  const { error } = await callOwnerRpc<string>("owner_delete_guest", { p_user_id: parsed.data.userId });
   if (error) return NextResponse.json({ error: error.message }, { status: 400 });
-
-  await admin.from("audit_events").insert({
-    actor: owner.email ?? owner.id,
-    action: "guest_deleted",
-    metadata: { guest_user_id: parsed.data.userId, guest_email: guestEmail },
-  });
-
   return NextResponse.json({ ok: true });
 }
