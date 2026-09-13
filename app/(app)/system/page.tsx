@@ -27,7 +27,19 @@ export default async function SystemPage() {
   ]);
 
   const lastRun = jobRuns?.[0];
-  const scannerLevel: SystemHealthLevel = !lastRun ? "UNKNOWN" : lastRun.status === "SUCCEEDED" ? "HEALTHY" : lastRun.status === "FAILED" ? "ERROR" : "WARNING";
+  // Server Component: this value is intentionally evaluated once per request
+  // so the health badge can detect a scheduler that has stopped advancing.
+  // eslint-disable-next-line react-hooks/purity
+  const lastRunAgeMs = lastRun ? Date.now() - new Date(lastRun.started_at).getTime() : null;
+  const scannerLevel: SystemHealthLevel = !lastRun
+    ? "UNKNOWN"
+    : lastRun.status === "FAILED" || (lastRunAgeMs !== null && lastRunAgeMs > 12 * 60_000)
+      ? "ERROR"
+      : lastRunAgeMs !== null && lastRunAgeMs > 7 * 60_000
+        ? "WARNING"
+        : lastRun.status === "SUCCEEDED" || lastRun.status === "NOOP"
+          ? "HEALTHY"
+          : "WARNING";
 
   return (
     <div className="space-y-6">

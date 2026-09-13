@@ -9,14 +9,11 @@
    any mode selector.
 
 ## RLS
-Every table in `public` has RLS enabled. No anonymous policies exist anywhere
-— default-deny covers the `anon` role automatically. Authenticated (the
-single owner account) can read all trading/analytics data; only
-`system_settings`, `lessons`, and `signals` (approve/reject) have
-authenticated UPDATE policies, and the settings policy's `WITH CHECK` still
-enforces `live_trading_enabled = false`. Verified via `get_advisors(type:
-security)` — 0 findings after locking down the `handle_new_user` trigger
-function's PostgREST RPC exposure.
+Every table in `public` has RLS enabled and no anonymous table policy exists.
+Authenticated owners may mutate the supported dashboard state; guests are
+read-only. The internal scanner JWT has only the insert/update policies needed
+for scan persistence. Public Auth user creation is rejected by a database
+trigger unless a server-controlled owner, guest, or scanner role is present.
 
 ## Secrets
 - Never logged, never committed (`.env*` gitignored), never returned to the
@@ -30,10 +27,12 @@ function's PostgREST RPC exposure.
   `lib/supabase/server.ts` `createAdminClient()`, imported exclusively from
   server-only files (cron/webhook route handlers). Never imported from
   anything under `components/` or any `"use client"` file.
+- Production's current value is stale. Scheduled scans deliberately avoid it
+  by exchanging a Vault-held scanner credential for a short-lived scoped JWT.
 
 ## Webhooks / cron (Phase 10, 13)
-- `/api/jobs/scan` will require `CRON_SECRET` in an Authorization header,
-  constant-time compared.
+- `/api/jobs/scan` accepts the dedicated scanner JWT. `CRON_SECRET` is retained
+  only as a manual fallback.
 - Telegram webhook will validate `X-Telegram-Bot-Api-Secret-Token` against
   `TELEGRAM_WEBHOOK_SECRET`, and only accept commands from
   `TELEGRAM_OWNER_USER_ID`/`TELEGRAM_CHAT_ID`.

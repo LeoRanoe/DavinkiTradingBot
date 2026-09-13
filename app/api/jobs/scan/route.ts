@@ -26,7 +26,8 @@ export const maxDuration = 60;
  * signal is prevented by the DB unique constraint on
  * (strategy_version_id, symbol, timeframe, candle_time).
  *
- * Auth: `Authorization: Bearer <CRON_SECRET>`. Missing/invalid -> 401.
+ * Auth: a short-lived JWT for the dedicated Supabase scanner principal.
+ * `CRON_SECRET` remains available only as a manual fallback.
  */
 export async function POST(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -54,12 +55,11 @@ export async function POST(request: NextRequest) {
     .single();
 
   if (jobRunError) {
-    // Most likely cause: SUPABASE_SECRET_KEY is invalid/mismatched, so even
-    // the service-role client can't authenticate. Surface the real reason
-    // instead of letting every downstream query fail with a misleading
-    // "not found" message.
+    // Surface the database error instead of letting downstream queries fail
+    // with a misleading "not found" message. Scheduled runs use the scoped
+    // scanner principal; only the manual fallback uses the admin client.
     return NextResponse.json(
-      { error: "Failed to write job_runs - check SUPABASE_SECRET_KEY", detail: jobRunError.message },
+      { error: "Failed to write job_runs", detail: jobRunError.message },
       { status: 500 },
     );
   }

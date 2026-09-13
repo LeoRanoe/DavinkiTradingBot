@@ -4,11 +4,11 @@ Last updated: 2026-09-13
 
 | Subsystem | Status | Evidence |
 | --- | --- | --- |
-| Git workflow | FIXED | Historical Claude branch preserved; repair work moved to `dev`. |
+| Git workflow | VERIFIED | Historical Claude branch preserved; `dev`, `staging`, and `main` contain the repaired release. GitHub/Vercel production use `main`. |
 | Next.js | VERIFIED | Next.js 16.3.5 installed docs followed; `proxy.ts` convention; typecheck/build pass. |
-| Authentication | FIXED | Public signup removed; owner login verified; owner/guest roles enforced server-side. |
-| Guest access | FIXED | Owner-only account create/reset/delete UI and API; passwords shown once. |
-| Supabase schema/RLS | VERIFIED | Live migration applied; every public table has RLS; guest mutations denied. |
+| Authentication | VERIFIED | Owner login works in production; `/signup` is absent; a database trigger also rejects public Auth signups. |
+| Guest access | VERIFIED | Production owner UI creates, resets, lists, and deletes guests; guest login is read-only and settings routes are blocked. |
+| Supabase schema/RLS | VERIFIED | Live migrations applied; every public table has RLS; owner/guest/scanner roles were exercised against production. |
 | Supabase advisors | PARTIAL | No table/RLS security errors; leaked-password protection warning remains. |
 | Bybit public data | VERIFIED | Current BTCUSDT spot kline, ticker, and instrument rules returned successfully. |
 | Closed candles | FIXED | Strategy discards open candles and scores the latest closed 15m candle. |
@@ -17,9 +17,10 @@ Last updated: 2026-09-13
 | Indicators | VERIFIED | EMA, RSI, ATR, volume, and swings covered by passing numerical tests. |
 | Risk engine | VERIFIED | LIVE blocked; $10 minimum-order conflict test passes without risk inflation. |
 | Backtester | VERIFIED | Next-candle fill and conservative ambiguous-candle outcome covered by tests. |
-| Paper trading | PARTIAL | Core entry/monitor/persistence code present; deployed end-to-end run pending. |
-| Qwen | PARTIAL | Server-only fallback architecture present; current preview connectivity pending. |
-| Telegram | PARTIAL | Owner-restricted webhook/client present; current preview connectivity pending. |
-| Supabase Cron | NOT CONFIGURED | No active `cron.job` was observed in the live database. |
-| Vercel | PARTIAL | Existing production responds; connector/CLI session cannot currently enumerate project settings. |
-| Staging readiness | PARTIAL | Local quality gate passes; deployed preview verification remains. |
+| Paper trading | PARTIAL | Deterministic entry/exit, fees, slippage, risk, and persistence paths pass tests; no live qualifying candidate existed for a production round trip. |
+| Qwen | VERIFIED | Production resolves the server-only Vercel fallback and the connection test completes without affecting scanner execution. |
+| Telegram | PARTIAL | Production configuration resolves and owner restriction is implemented; no new outbound test message was sent during this audit. |
+| Dashboard-managed secrets | PARTIAL | Vault-first architecture is present, but the deployed `SUPABASE_SECRET_KEY` is stale, so saving a new connection or privileged webhook/paper writes still needs key repair. |
+| Supabase Cron | PARTIAL | Authenticated Edge path recorded `SUCCEEDED` then `NOOP`, but the production schedule stopped advancing after 16:20 UTC and needs scheduler access restored. |
+| Vercel | VERIFIED | Production responds at the canonical URL, deploys `main`, and authenticated/unauthenticated route behavior was checked in-browser. |
+| Staging readiness | VERIFIED | The same repaired commit is present on `dev`, `staging`, and `main`; local release gate passes. |

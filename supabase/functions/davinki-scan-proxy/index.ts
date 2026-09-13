@@ -54,7 +54,10 @@ Deno.serve(async (request: Request) => {
     if (!tokenResponse.ok) {
       return Response.json({ error: "Scanner sign-in failed", status: tokenResponse.status }, { status: 502 });
     }
-    const tokenBody = await tokenResponse.json() as { access_token?: string };
+    const tokenBody = await tokenResponse.json() as {
+      access_token?: string;
+      user?: { app_metadata?: { role?: string } };
+    };
     if (!tokenBody.access_token) {
       return Response.json({ error: "Scanner token was not issued" }, { status: 502 });
     }
@@ -69,6 +72,12 @@ Deno.serve(async (request: Request) => {
       body: "{}",
     });
     const body = await upstream.text();
+    if (upstream.status === 401) {
+      return Response.json(
+        { error: "Scanner token was rejected upstream", role: tokenBody.user?.app_metadata?.role ?? null },
+        { status: 502 },
+      );
+    }
     return new Response(body, {
       status: upstream.status,
       headers: { "content-type": upstream.headers.get("content-type") ?? "application/json" },

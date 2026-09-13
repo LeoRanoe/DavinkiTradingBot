@@ -22,8 +22,9 @@
     default, shadcn/ui + TanStack Table + Recharts + lightweight-charts.
 
 ## Data flow (scan cycle)
-Supabase Cron -> `POST /api/jobs/scan` (CRON_SECRET) -> for each symbol: fetch
-1H+15M candles -> `evaluateSignal()` -> if CANDIDATE, persist `signals` row
+Supabase Cron -> authenticated Edge proxy -> short-lived scanner JWT ->
+`POST /api/jobs/scan` -> for each symbol: fetch 1H+15M candles ->
+`evaluateSignal()` -> if CANDIDATE, persist `signals` row
 (idempotent on strategy_version_id+symbol+timeframe+candle_time) -> optionally
 call Qwen for an explanation -> optionally notify Telegram -> job_runs row
 records outcome either way (including NOOP when no new closed candle).

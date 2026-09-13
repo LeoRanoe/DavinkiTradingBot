@@ -1,21 +1,5 @@
--- The authenticated Supabase Edge proxy uses its automatic service-role
--- credential to obtain the scanner secret. No browser/anon/authenticated user
--- can execute this function.
-create or replace function public.get_davinki_cron_secret()
-returns text
-language sql
-security definer
-set search_path = ''
-as $$
-  select decrypted_secret
-  from vault.decrypted_secrets
-  where name = 'davinki_cron_secret'
-  limit 1;
-$$;
-
-revoke all on function public.get_davinki_cron_secret() from public, anon, authenticated;
-grant execute on function public.get_davinki_cron_secret() to service_role;
-
+-- The authenticated Edge proxy obtains only the internal scanner principal's
+-- credentials. Browser, anon, and ordinary authenticated users cannot call it.
 create or replace function public.get_davinki_scanner_credentials()
 returns jsonb
 language sql
