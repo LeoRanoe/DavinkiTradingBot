@@ -1,27 +1,32 @@
 # TASKS
 
-Phase order and status. See `docs/BUILD_STATE.md` for narrative detail.
+- [x] Phase 1: Repo foundation
+- [x] Phase 2: Supabase schema + RLS + auth
+- [x] Phase 3: Bybit public market client
+- [x] Phase 4: Indicators (16 tests)
+- [x] Phase 5: Strategy V1 (10 tests)
+- [x] Phase 6: Risk engine (17 tests, incl. mandatory min-order test)
+- [x] Phase 7-8: Backtester (6 tests) + backtests UI page
+- [x] Phase 9: Core dashboard UI (all 11 pages + shell + login)
+- [x] Phase 10: Supabase Cron scanner endpoint (`/api/jobs/scan`)
+- [x] Phase 11-12: Knowledge base schema + Qwen client (ingestion pipeline pending)
+- [x] Phase 13: Telegram client + webhook route (untested live - no bot token)
+- [x] Phase 14: Paper trading engine
+- [x] Phase 15: Bybit Demo interface (mocked, no credentials)
+- [x] Phase 16: job_runs/audit_events + System status page
+- [ ] Phase 17: Manual responsive/dark-light QA pass with screenshots
+- [ ] Phase 18: Vercel deployment - **blocked on GitHub login connection** (see BUILD_STATE.md)
 
-- [x] Phase 1: Repo foundation (Next.js 16 + TS, Tailwind 4, shadcn/ui, Vitest, docs)
-- [x] Phase 2: Supabase schema, RLS, auth trigger, generated types (project `xvklitfcesprzbnfslks`)
-- [x] Phase 3: Bybit V5 public market client (candles, instruments, ticker) - Zod validated
-- [x] Phase 4: Indicators (EMA/RSI/ATR/volume/swings) - 16 tests passing
-- [x] Phase 5: Strategy V1 (regime gate, setup score, signal evaluation) - 10 tests passing
-- [x] Phase 6: Risk engine (position sizing, account limits, mandatory min-order test) - 17 tests passing
-- [ ] Phase 7-8: Backtester (no-look-ahead, fees/slippage) + validation/holdout + UI
-- [ ] Phase 9: Core dashboard UI (shell, markets, signals, candlestick chart, tables)
-- [ ] Phase 10: Supabase Cron scanner (`/api/jobs/scan`) + job_runs tracking
-- [ ] Phase 11: Knowledge base (pgvector ingestion + retrieval)
-- [ ] Phase 12: Qwen integration (explanations, lessons, trade review) behind an interface
-- [ ] Phase 13: Telegram integration (webhook, notifications, approve/reject)
-- [ ] Phase 14: Paper trading engine ($10 simulated portfolio)
-- [ ] Phase 15: Bybit Demo abstraction (mocked - no demo credentials supplied)
-- [ ] Phase 16: Monitoring/audit log/order reconciliation
-- [ ] Phase 17: Responsive/dark-light UI polish
-- [ ] Phase 18: Vercel deployment + end-to-end verification
-
-## Next immediate steps
-1. Backtester core (`lib/backtest/`) sharing strategy + risk logic.
-2. Seed a Strategy V1 `strategy_versions` row (status DRAFT) so signals/backtests
-   have a valid foreign key.
-3. App shell + dashboard page skeleton wired to Supabase.
+## Immediate next steps (in order)
+1. Owner: connect GitHub to Vercel account (one-time), then re-run project
+   creation/deploy.
+2. Owner: set `SUPABASE_SECRET_KEY` in Vercel env vars (copy from Supabase
+   dashboard).
+3. Configure Supabase Cron (`pg_cron` + `pg_net`) to POST `/api/jobs/scan`
+   every 5 minutes with `CRON_SECRET`.
+4. Register Telegram webhook once a stable URL + bot token exist.
+5. Build the knowledge ingestion pipeline once `QWEN_API_KEY` is available
+   (pick an embedding model, populate `knowledge_chunks.embedding`).
+6. Run a real historical backtest (fetch real Bybit history) and persist a
+   `backtests` row so the Backtests page shows real numbers instead of an
+   empty state.
