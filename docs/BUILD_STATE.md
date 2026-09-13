@@ -66,9 +66,34 @@ Last updated: 2026-09-13
   and this session's application code is on the feature branch, not yet
   deployed.
 
+## Task A — Milestone 2 (Telegram approval + PAPER positions) — COMPLETE
+
+- The bot is operational in PAPER + APPROVAL_REQUIRED: a risk-approved
+  candidate reaches Telegram with APPROVE/REJECT/VIEW, approval re-runs the
+  complete deterministic pipeline against fresh market data, a single PAPER
+  position opens, the scheduled job manages it to stop or target, and the
+  result (P/L, realized R, fees, slippage, new equity) is persisted and
+  reported.
+- Idempotency is guaranteed by the database, not by application logic: an
+  atomic PENDING -> OPENING claim, a partial unique index on
+  `trades (signal_id)`, and an atomic OPEN -> CLOSED settlement. Verified
+  directly against the live schema in a rolled-back transaction (claim
+  admits 1 of 2 callers; duplicate position refused; LIVE insert refused).
+- Position management runs on the job's own cadence and is deliberately not
+  gated on a new closed strategy candle.
+- 185/185 tests passing (111 before this milestone + 74 new, including the
+  end-to-end proof); typecheck, lint and production build clean.
+- The deployed (pre-change) production scan still ran SUCCEEDED after both
+  additive migrations, with NOOP behavior intact.
+- Strategy `v1` remains `DRAFT` by design, so production candidates still
+  resolve to a typed `STRATEGY_NOT_APPROVED`. See
+  `docs/STRATEGY_V1_PAPER_READINESS.md`.
+- Not yet deployed: the Milestone 1 and 2 application code is on the feature
+  branch only.
+
 ## Remaining hardening
 
-- Replace or remove the stale Vercel `SUPABASE_SECRET_KEY`. Owner Vault saves, dashboard PAPER writes, guest management, and scans no longer depend on it; the remaining dependency is Telegram callback execution and the manual Cron fallback.
-- Send a fresh Telegram test message and verify the webhook callback after that key is repaired.
+- Replace or remove the stale Vercel `SUPABASE_SECRET_KEY`. Owner Vault saves, dashboard PAPER writes, guest management, and scans no longer depend on it; the remaining dependency is Telegram callback execution and the manual Cron fallback. Milestone 2 narrowed that path to a small set of specific operations and made a missing/rotated key surface as a clear "server configuration error" acknowledgement with nothing executed, instead of a 500 that Telegram would retry indefinitely. Replacing the key with a narrowly-scoped capability (an inbound webhook has no user session to carry RLS) is still open.
+- Send a fresh Telegram test message and verify the webhook callback end to end. This could NOT be done from the development session: the bot token lives only in Vercel environment variables (there is no `telegram` row in `integration_credentials`), and the Milestone 2 code is not deployed yet. The Telegram formatting, callback parsing and authorization logic are unit-tested (13 tests), but a real button press remains unverified.
 - Exercise one naturally occurring production paper candidate through entry and exit; the deterministic path is currently test-verified only.
 - Supabase leaked-password protection is still disabled at the project level.

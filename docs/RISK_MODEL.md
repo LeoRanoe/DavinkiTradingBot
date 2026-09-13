@@ -45,6 +45,8 @@ market data is older than `max_market_data_age_seconds`
 ATR/price exceeds `max_atr_pct` (`EXCESSIVE_VOLATILITY`). A candidate is
 always priced from a fresh ticker, never from the closed signal candle.
 Qwen has no say in any of this.
+
+## Minimum-order conflict (the invariant that must never break)
 If the resulting `qty` is below `minOrderQty` or the resulting notional is
 below `minOrderAmt`, the trade is **rejected** with `MIN_ORDER_RISK_CONFLICT`.
 The size is never inflated to the minimum and the stop is never shrunk to
@@ -92,3 +94,29 @@ a recommendation until the owner approves it, and approval re-runs every
 check against fresh market data. `AUTO` is a PAPER/DEMO-only future
 capability; a database CHECK constraint makes AUTO impossible in any other
 mode, and LIVE remains unreachable at every layer.
+
+## Execution and settlement (Milestone 2)
+
+Approval never executes a stored proposal. After an atomic claim, the full
+deterministic pipeline re-runs against a fresh ticker, freshly recomputed
+ATR, current settings, current equity and available balance, and current
+exchange rules. Any failure rejects with a typed reason and opens nothing.
+
+Cost accounting, stated once so it is never double-counted:
+
+```
+entryFill = reference * (1 + slippageBps/10000)   # worse for a long
+exitFill  = stopOrTarget * (1 - slippageBps/10000)
+grossPnl  = (exitFill - entryFill) * qty          # slippage already inside
+netPnl    = grossPnl - entryFee - exitFee         # each fee once
+realizedR = netPnl / modeled_max_loss             # costs included
+```
+
+Because realized R is measured against the modeled worst case recorded at
+open, a clean stop-out reads about -1.0R after costs rather than a
+flatteringly smaller number.
+
+Settlement is idempotent: the OPEN -> CLOSED transition is an atomic
+compare-and-set and the equity snapshot is written only by the caller that
+won it, so a repeated or overlapping scan cannot re-charge fees or
+double-count P/L.

@@ -1,9 +1,10 @@
 import type { Database } from "@/lib/supabase/database.types";
 import type { TradingMode } from "@/lib/types/trading-mode";
-import type { ScoreResult } from "@/lib/strategy/v1/score";
-import type { CandidateBuildResult } from "./types";
+import type { ScoreComponent, ScoreResult } from "@/lib/strategy/v1/score";
+import type { CandidateBuildResult, IndicatorSnapshot } from "./types";
 
 export type SignalInsertRow = Database["public"]["Tables"]["signals"]["Insert"];
+export type SignalRow = Database["public"]["Tables"]["signals"]["Row"];
 
 export type SignalRowInput = {
   strategyVersionId: string;
@@ -100,5 +101,68 @@ export function buildSignalRow(input: SignalRowInput): SignalInsertRow {
     volatility_state: candidate.volatilityState,
     risk_snapshot: candidate.risk as unknown as Database["public"]["Tables"]["signals"]["Insert"]["risk_snapshot"],
     indicator_snapshot: candidate.indicators as unknown as Database["public"]["Tables"]["signals"]["Insert"]["indicator_snapshot"],
+  };
+}
+
+/**
+ * Rebuilds the strategy `ScoreResult` for a persisted candidate so an
+ * approval can be revalidated WITHOUT re-deriving a historical decision
+ * (Milestone 1 persisted the snapshot precisely so this is possible).
+ *
+ * Two deliberate choices:
+ *  - `entryPrice` is the ORIGINAL `planned_entry`, so entry drift on
+ *    approval is measured against the plan the owner was shown, not against
+ *    a moving reference.
+ *  - `atrPctOverride` lets the caller substitute a FRESH ATR reading, so the
+ *    volatility gate re-evaluates current conditions instead of replaying
+ *    the conditions that existed when the candidate was created.
+ */
+export function reconstructScoreResult(
+  row: Pick<
+    SignalRow,
+    | "score"
+    | "classification"
+    | "planned_entry"
+    | "entry_price"
+    | "stop_price"
+    | "target_price"
+    | "risk_reward"
+    | "indicator_snapshot"
+  >,
+  opts: { atrPctOverride?: number | null } = {},
+): ScoreResult {
+  const indicators = (row.indicator_snapshot ?? {}) as Partial<IndicatorSnapshot>;
+  const atrPct =
+    opts.atrPctOverride !== undefined ? opts.atrPctOverride : (indicators.atrPct ?? null);
+
+  const components: ScoreComponent[] = [
+    {
+      name: "trend",
+      pointsEarned: 0,
+      pointsPossible: 0,
+      detail: {
+        ema20: indicators.ema20 ?? null,
+        ema50: indicators.ema50 ?? null,
+        ema200: indicators.ema200 ?? null,
+      },
+    },
+    { name: "momentum", pointsEarned: 0, pointsPossible: 0, detail: { rsi: indicators.rsi14 ?? null } },
+    {
+      name: "volume",
+      pointsEarned: 0,
+      pointsPossible: 0,
+      detail: { relativeVolume: indicators.relativeVolume ?? null },
+    },
+    { name: "volatility", pointsEarned: 0, pointsPossible: 0, detail: { atrPct } },
+  ];
+
+  return {
+    total: row.score,
+    classification: row.classification,
+    entryPrice: row.planned_entry ?? row.entry_price ?? 0,
+    stopPrice: row.stop_price,
+    targetPrice: row.target_price,
+    riskReward: row.risk_reward,
+    components,
   };
 }

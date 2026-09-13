@@ -5,41 +5,132 @@ the Task A milestones on top of the Codex-repaired foundation. Update it
 after every milestone.
 
 ## MILESTONE_1_COMPLETE = true
+## MILESTONE_2_COMPLETE = true
+## AUTOMATED_TRADING_CORE_READY = true
 
-Owner risk configuration and the complete trade-candidate pipeline are
-implemented, integrated into the real scanner code path, persisted, and
-verified. See "Milestone 1 completion evidence" below, including the two
-honest caveats.
+Owner risk configuration, the complete trade-candidate pipeline, Telegram
+approval, PAPER execution and automatic position management are implemented,
+integrated into the real scanner code path, persisted and verified. The bot
+is operational in PAPER + APPROVAL_REQUIRED, subject to the one owner
+decision recorded under "Caveat A" (Strategy v1 is still DRAFT by design).
 
 ## CURRENT_MILESTONE
-None in progress. Milestone 2 (Telegram approval + paper position) is the
-next milestone and has NOT been started.
+None in progress. Milestone 3 (News + Qwen) is next and has NOT been started.
 
 ## LAST_COMPLETED_MILESTONE
-Milestone 1 — Owner risk + complete trade candidate.
+Milestone 2 — Telegram approval + PAPER position lifecycle.
 
 ## CURRENT_BRANCH
 `claude/davinki-milestone-1-ekbi1k`
 
 ## LAST_GOOD_COMMIT
-The commit on this branch prefixed `feat(milestone-1):` — the Milestone 1
-integration commit. The preceding `feat(risk):` commit carries the
-deterministic library layer.
+The commit on this branch prefixed `feat(milestone-2):`. Milestone 1 is
+carried by the preceding `feat(risk):` and `feat(milestone-1):` commits.
 
-## VERIFIED_BASELINE
+## VERIFIED_BASELINE (after Milestone 2)
 
-- Local: typecheck clean, lint clean (2 pre-existing non-blocking warnings,
-  unchanged), **111/111 tests passing**, production build passing.
-- Live Supabase (`xvklitfcesprzbnfslks`): migration applied and verified;
-  existing settings values preserved; RLS re-verified (guest write blocked,
-  owner write allowed); all three LIVE paths refused at the database level.
-- Deployed production: a scheduled scan ran at 19:30 UTC **after** the
-  migration and returned SUCCEEDED with 2 symbols processed and no errors,
-  proving the additive migration did not break the running (pre-change)
-  deployment or the Cron path. NOOP behavior still observed on ticks with
-  no new closed candle.
+- Local: typecheck clean, lint clean (the same 2 pre-existing non-blocking
+  warnings), **185/185 tests passing**, production build passing.
+- Live Supabase (`xvklitfcesprzbnfslks`): both Milestone 2 migrations
+  applied and verified. Database guarantees exercised directly against the
+  real schema inside a rolled-back transaction:
+  atomic claim admits exactly one caller (`first=1, second=0`), the expiry
+  sweep works, a duplicate position per candidate is refused by the unique
+  index, a LIVE trade insert is refused, and the full
+  PENDING -> OPENING -> APPROVED lifecycle works with the new enum values.
+- RLS re-verified earlier this milestone chain: guest settings UPDATE = 0
+  rows, owner = 1 row; LIVE refused three ways.
+- Deployed production: the scheduled scan ran SUCCEEDED at 19:45 UTC
+  **after** both Milestone 2 migrations, 2 symbols processed, no errors, with
+  NOOP still observed on ticks with no new closed candle - the additive
+  migrations did not break the running (pre-change) deployment or the Cron
+  path.
 
-## WHAT WAS BUILT THIS SESSION (Milestone 1 integration)
+## WHAT WAS BUILT (Milestone 2 — Telegram approval + PAPER positions)
+
+### Schema (additive only)
+
+`20260913200000_milestone2_approval_and_positions.sql` (+ a separate
+enum-value migration, since new enum values must commit before use):
+
+- `signal_approval_status` gained `OPENING` (the atomic claim state) and
+  `ERROR`.
+- `signals` gained `owner_decision`, `decision_at`, `decision_source`,
+  `approval_delay_ms`, `processed_at` (+ CHECK constraints).
+- `trades` gained `exit_reason`, `entry_fee`, `exit_fee`, `risk_budget`,
+  `modeled_max_loss`, `equity_after`.
+- **`trades_one_per_signal`**: a partial unique index on
+  `trades (signal_id)` - the database guarantee that one candidate can
+  produce at most one position.
+- `scanner_update_signals` RLS policy so the scheduled job can sweep expired
+  candidates. No existing policy was modified or widened.
+
+### Approval flow (`lib/trading/approval.ts`)
+
+Built against ports (`ApprovalStore`, `MarketDataPort`) so every branch is
+deterministically testable; the Supabase adapters are
+`approval-store.ts` / `position-store.ts`.
+
+- APPROVE = atomic claim, then FULL revalidation against a fresh ticker and
+  fresh candles (volatility is recomputed from current ATR, so it can
+  genuinely "become excessive"), current settings, current account, current
+  exchange rules - then execution. The stored trade plan is never
+  recomputed, so the bot cannot chase.
+- REJECT = atomic PENDING -> REJECTED with `owner_decision='REJECTED'`;
+  candidate data is retained for Milestone 4 counterfactuals.
+- Every state transition is a single-statement compare-and-set. No
+  read-then-write anywhere in the flow.
+
+### Position management (`lib/trading/position-manager.ts`)
+
+- Runs in PHASE 1 of the scan job, on the job's cadence, NOT gated on a new
+  closed strategy candle.
+- Atomic OPEN -> CLOSED; the equity snapshot is written only by the caller
+  that won the transition, so settlement cannot double-count.
+- `settlement.ts` holds the cost math: slippage lives in the fill prices
+  only (never subtracted twice), fees are charged once per leg, and realized
+  R uses the modeled max loss so a clean stop-out reads about -1.0R after
+  costs.
+- Refuses to settle on stale candles rather than inventing a fill.
+
+### Telegram
+
+Actionable recommendation with real persisted values and APPROVE / REJECT /
+VIEW buttons; News is omitted rather than faked. Callbacks are authenticated
+four ways (secret header, owner user id, owner chat id, strict `action:uuid`
+payload) and the handler returns 200 even on internal error so Telegram
+cannot retry-loop. Position-opened and position-closed messages are factual,
+with no gambling language.
+
+### UI
+
+`/signals/[id]` - the VIEW target: setup, trade plan, risk breakdown,
+indicators and the resulting position. Authentication required.
+
+### Tests (+74 this milestone)
+
+`settlement.test.ts` (10), `approval.test.ts` (32), `position-manager.test.ts`
+(15), `telegram.test.ts` (13), and `milestone2-e2e.test.ts` (4) — the last
+being the primary proof: fixture -> real Strategy V1 -> real risk engine ->
+persisted PENDING -> simulated Telegram APPROVE -> full revalidation ->
+exactly one PAPER position -> market movement -> automatic close -> P/L,
+realized R, equity updated once -> notification payload.
+
+## Milestone 2 completion evidence
+
+All 20 acceptance criteria are met; the notable ones:
+
+| Criterion | Status |
+|---|---|
+| 6. Approval performs full deterministic revalidation | 16 revalidation branches asserted, each rejecting instead of executing |
+| 7. Moved/expired/invalid candidate does not execute | Entry-range, stale-data, expiry, volatility, limits all covered |
+| 8. At most one PAPER position per candidate | Atomic claim + unique index, both verified live and in tests |
+| 10. Management works across requests | E2E test settles via a brand-new store object, state read from storage only |
+| 13-16. Fees/slippage, P/L, R, equity | `settlement.test.ts` asserts no double-counting; equity moves once, by exactly the net P/L |
+| 18. Duplicate callbacks/scans cannot duplicate state | Double-tap, concurrent race, 3x retry, repeated scan all asserted |
+| 19. LIVE remains impossible | Five layers; live insert refused in the database |
+
+## WHAT WAS BUILT EARLIER (Milestone 1 integration)
 
 ### Schema (additive only — nothing dropped, relaxed, or overwritten)
 
@@ -141,8 +232,8 @@ threshold.
 
 ### Caveat B — Not yet deployed
 
-The schema change is live (shared project), but this session's application
-code is on the feature branch only. Promotion to `dev`/`staging`/`main` is
+The schema changes are live (shared project), but the Milestone 1 and 2
+application code is on the feature branch only. Promotion to `dev`/`staging`/`main` is
 Milestone 6 work or an explicit owner decision. The running deployment was
 verified to still work against the migrated schema.
 
@@ -151,30 +242,32 @@ None. Pre-existing hardening items from the Codex handoff remain open (see
 `docs/BUILD_STATE.md` "Remaining hardening") and do not block Milestone 2.
 
 ## NEXT_ACTION
-Start Milestone 2 (Telegram approval + paper position):
-1. Telegram recommendation message rendering the persisted candidate
-   snapshot (symbol, score, entry, allowed entry range, stop, target, R/R,
-   equity, risk config, risk budget, estimated actual risk, position size,
-   target profit, regime, volatility, expiry) with APPROVE / REJECT / VIEW
-   buttons.
-2. APPROVE = full fresh-market revalidation through the same
-   `buildCandidateForScan` seam (identity, candidate state, expiry, current
-   price, entry drift, freshness, strategy validity, stop/target, risk,
-   equity, balance, exchange rules, daily limits, open-position limit,
-   idempotency) — never blind execution of the stored proposal.
-3. Exactly one position per candidate: protect against double click,
-   webhook retry, cron overlap, dashboard + Telegram races, Vercel retry.
-4. PAPER execution + persistent position + automatic stop/target management
-   + portfolio update + Telegram result.
-5. Mark `AUTOMATED_TRADING_CORE_READY = true`.
 
-Note for Milestone 2: `signals.rejection_reason` distinguishes an engine
-rejection (reason set) from an owner rejection (reason null) on the same
-`approval_status = 'REJECTED'` row — keep that convention rather than adding
-a second state column.
+Two things are open, in this order of importance:
+
+1. **Owner decision (not a coding task): Strategy v1 DRAFT -> PAPER_APPROVED.**
+   Read `docs/STRATEGY_V1_PAPER_READINESS.md`. The recommendation is NOT YET:
+   zero backtests have ever been run, so there is no sample size, expectancy,
+   profit factor or drawdown to judge. The report lists exactly what would
+   make the decision answerable. Do NOT flip this status to make the pipeline
+   visibly work.
+2. **Milestone 3 (News + Qwen).** A separate News Intelligence module:
+   `NewsProvider -> normalize -> deduplicate -> event clustering -> asset
+   relevance -> Qwen structured analysis -> candidate context`. News informs
+   a trade; it never creates one. Most 5-minute scans must make zero Qwen
+   calls, and Qwen failure must not stop the scanner, strategy, risk,
+   Telegram or PAPER management. The `news` field already exists structurally
+   on `TradeCandidate` and is deliberately omitted from Telegram until real
+   data backs it.
+
+Conventions to preserve in Milestone 3+:
+- `signals.rejection_reason` set = engine rejection; null with
+  `owner_decision='REJECTED'` = owner rejection. One state machine.
+- Never add a second dedup mechanism; the signals unique constraint and
+  `trades_one_per_signal` are authoritative.
+- Deployment of this branch has not happened yet (see Caveat B).
 
 ## REMAINING_TASK_A_WORK
-Milestone 2 (Telegram approval + paper position) -> Milestone 3 (News +
-Qwen) -> Milestone 4 (Controlled learning) -> Milestone 5 (Trading Command
-Center UI) -> Milestone 6 (staging -> production promotion with full manual
-verification).
+Milestone 3 (News + Qwen) -> Milestone 4 (Controlled learning) ->
+Milestone 5 (Trading Command Center UI) -> Milestone 6 (staging ->
+production promotion with full manual verification).

@@ -647,18 +647,23 @@ export type Database = {
       signals: {
         Row: {
           ai_explanation: Json | null
+          approval_delay_ms: number | null
           approval_status: Database["public"]["Enums"]["signal_approval_status"]
           approved_at: string | null
           candle_time: string
           classification: Database["public"]["Enums"]["signal_classification"]
           created_at: string
+          decision_at: string | null
+          decision_source: string | null
           entry_price: number | null
           expires_at: string | null
           id: string
           indicator_snapshot: Json | null
           maximum_allowed_entry: number | null
           minimum_allowed_entry: number | null
+          owner_decision: string | null
           planned_entry: number | null
+          processed_at: string | null
           reason: string | null
           reference_price: number | null
           reference_price_at: string | null
@@ -679,18 +684,23 @@ export type Database = {
         }
         Insert: {
           ai_explanation?: Json | null
+          approval_delay_ms?: number | null
           approval_status?: Database["public"]["Enums"]["signal_approval_status"]
           approved_at?: string | null
           candle_time: string
           classification: Database["public"]["Enums"]["signal_classification"]
           created_at?: string
+          decision_at?: string | null
+          decision_source?: string | null
           entry_price?: number | null
           expires_at?: string | null
           id?: string
           indicator_snapshot?: Json | null
           maximum_allowed_entry?: number | null
           minimum_allowed_entry?: number | null
+          owner_decision?: string | null
           planned_entry?: number | null
+          processed_at?: string | null
           reason?: string | null
           reference_price?: number | null
           reference_price_at?: string | null
@@ -711,18 +721,23 @@ export type Database = {
         }
         Update: {
           ai_explanation?: Json | null
+          approval_delay_ms?: number | null
           approval_status?: Database["public"]["Enums"]["signal_approval_status"]
           approved_at?: string | null
           candle_time?: string
           classification?: Database["public"]["Enums"]["signal_classification"]
           created_at?: string
+          decision_at?: string | null
+          decision_source?: string | null
           entry_price?: number | null
           expires_at?: string | null
           id?: string
           indicator_snapshot?: Json | null
           maximum_allowed_entry?: number | null
           minimum_allowed_entry?: number | null
+          owner_decision?: string | null
           planned_entry?: number | null
+          processed_at?: string | null
           reason?: string | null
           reference_price?: number | null
           reference_price_at?: string | null
@@ -961,10 +976,15 @@ export type Database = {
         Row: {
           closed_at: string | null
           created_at: string
+          entry_fee: number | null
           entry_price: number | null
+          equity_after: number | null
+          exit_fee: number | null
           exit_price: number | null
+          exit_reason: string | null
           fees: number
           id: string
+          modeled_max_loss: number | null
           notional: number | null
           opened_at: string | null
           pnl: number | null
@@ -972,6 +992,7 @@ export type Database = {
           r_multiple: number | null
           rejection_reason: string | null
           risk_amount: number | null
+          risk_budget: number | null
           risk_reward: number | null
           side: Database["public"]["Enums"]["trade_side"]
           signal_id: string | null
@@ -986,10 +1007,15 @@ export type Database = {
         Insert: {
           closed_at?: string | null
           created_at?: string
+          entry_fee?: number | null
           entry_price?: number | null
+          equity_after?: number | null
+          exit_fee?: number | null
           exit_price?: number | null
+          exit_reason?: string | null
           fees?: number
           id?: string
+          modeled_max_loss?: number | null
           notional?: number | null
           opened_at?: string | null
           pnl?: number | null
@@ -997,6 +1023,7 @@ export type Database = {
           r_multiple?: number | null
           rejection_reason?: string | null
           risk_amount?: number | null
+          risk_budget?: number | null
           risk_reward?: number | null
           side?: Database["public"]["Enums"]["trade_side"]
           signal_id?: string | null
@@ -1011,10 +1038,15 @@ export type Database = {
         Update: {
           closed_at?: string | null
           created_at?: string
+          entry_fee?: number | null
           entry_price?: number | null
+          equity_after?: number | null
+          exit_fee?: number | null
           exit_price?: number | null
+          exit_reason?: string | null
           fees?: number
           id?: string
+          modeled_max_loss?: number | null
           notional?: number | null
           opened_at?: string | null
           pnl?: number | null
@@ -1022,6 +1054,7 @@ export type Database = {
           r_multiple?: number | null
           rejection_reason?: string | null
           risk_amount?: number | null
+          risk_budget?: number | null
           risk_reward?: number | null
           side?: Database["public"]["Enums"]["trade_side"]
           signal_id?: string | null
@@ -1107,6 +1140,8 @@ export type Database = {
         | "REJECTED"
         | "EXPIRED"
         | "NOT_APPLICABLE"
+        | "OPENING"
+        | "ERROR"
       signal_classification: "IGNORE" | "LOG" | "WATCH" | "CANDIDATE"
       strategy_status:
         | "DRAFT"
@@ -1263,6 +1298,8 @@ export const Constants = {
         "REJECTED",
         "EXPIRED",
         "NOT_APPLICABLE",
+        "OPENING",
+        "ERROR",
       ],
       signal_classification: ["IGNORE", "LOG", "WATCH", "CANDIDATE"],
       strategy_status: [

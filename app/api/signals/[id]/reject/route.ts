@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { rejectSignalManually } from "@/lib/trading/execute";
 import { isOwner } from "@/lib/auth/authorization";
 
+/** Dashboard "Reject". Atomic PENDING -> REJECTED, attributed to the owner. */
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient();
   const {
@@ -12,6 +13,8 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
   if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
   const { id } = await params;
-  await rejectSignalManually(id, "dashboard", supabase);
-  return NextResponse.json({ ok: true });
+  const outcome = await rejectSignalManually(id, "dashboard", supabase);
+
+  const status = outcome.kind === "NOT_FOUND" ? 404 : 200;
+  return NextResponse.json(outcome, { status });
 }

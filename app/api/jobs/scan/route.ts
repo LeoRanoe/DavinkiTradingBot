@@ -5,13 +5,21 @@ import { createAdminClient, createBearerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import { evaluateSignal } from "@/lib/strategy/v1/signal";
 import { STRATEGY_V1_PARAMS, STRATEGY_V1_VERSION_LABEL } from "@/lib/strategy/v1/config";
-import { checkAndCloseOpenTrades } from "@/lib/trading/monitor";
 import { computeAccountState } from "@/lib/trading/account-state";
+import { manageOpenPositions } from "@/lib/trading/position-manager";
+import { createPositionStore, sweepStaleCandidates } from "@/lib/trading/position-store";
+import { bybitMarketData } from "@/lib/trading/execute";
 import { buildCandidateForScan } from "@/lib/candidates/from-settings";
 import { buildSignalRow } from "@/lib/candidates/persistence";
 import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
+import { getAppUrl } from "@/lib/config/env";
 import type { InstrumentRules } from "@/lib/risk/types";
-import { sendTelegramMessage, formatCandidateMessage } from "@/lib/telegram/client";
+import {
+  sendTelegramMessage,
+  formatCandidateMessage,
+  formatTradeClosedMessage,
+  buildCandidateKeyboard,
+} from "@/lib/telegram/client";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -106,8 +114,39 @@ export async function POST(request: NextRequest) {
   let signalsFound = 0;
   let candidatesBuilt = 0;
   let candidatesRejected = 0;
-  let tradesClosed = 0;
   const errors: string[] = [];
+
+  // ---------------------------------------------------------------------
+  // PHASE 1 - manage what is already open.
+  //
+  // This runs on the job's own cadence and is deliberately NOT gated on a
+  // new closed 15m strategy candle: an open position must be monitored every
+  // run, whether or not a new setup candle has arrived. Settlement is
+  // idempotent (atomic OPEN -> CLOSED), so overlapping runs are safe.
+  // ---------------------------------------------------------------------
+  const positionOutcome = await manageOpenPositions({
+    store: createPositionStore(admin),
+    market: bybitMarketData,
+    settings,
+  });
+  const tradesClosed = positionOutcome.closed.length;
+  errors.push(...positionOutcome.errors);
+
+  for (const closed of positionOutcome.closed) {
+    await sendTelegramMessage(formatTradeClosedMessage(closed, STRATEGY_V1_VERSION_LABEL)).catch(() => undefined);
+  }
+
+  // Lapse unattended candidates and reconcile any claim that died mid-flight.
+  // Silent by design - the owner is not pinged every time one expires.
+  try {
+    await sweepStaleCandidates(admin);
+  } catch (sweepErr) {
+    errors.push(`candidate sweep: ${(sweepErr as Error).message}`);
+  }
+
+  // ---------------------------------------------------------------------
+  // PHASE 2 - evaluate new closed strategy candles.
+  // ---------------------------------------------------------------------
 
   for (const symbol of STRATEGY_V1_PARAMS.symbols) {
     try {
@@ -182,8 +221,8 @@ export async function POST(request: NextRequest) {
         await admin.from("candles").upsert(candleRows, { onConflict: "symbol,timeframe,open_time", ignoreDuplicates: true });
       }
 
-      tradesClosed += await checkAndCloseOpenTrades(admin, symbol, candles15m);
-
+      // Open positions were already managed in phase 1, on the job's own
+      // cadence rather than this per-symbol candle loop.
       if (existingCandle) continue;
 
       const evaluation = evaluateSignal(symbol, candles1h, candles15m);
@@ -320,21 +359,25 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Notify only about a candidate the deterministic layer actually
-      // approved - a strategy-level CANDIDATE that failed risk validation is
-      // recorded with its typed reason, never announced as tradeable.
-      // (The interactive APPROVE/REJECT flow is Milestone 2.)
+      // An ACTIONABLE recommendation is sent only for a candidate that is
+      // strategy-valid, risk-valid, exchange-valid, unexpired, fresh, unique
+      // and permitted by the current mode - i.e. exactly the rows that
+      // reached PENDING. IGNORE/LOG/WATCH classifications, risk-rejected
+      // candidates, duplicates and NOOP runs never notify.
       if (insertedSignal && candidateResult?.kind === "CANDIDATE") {
         const { candidate } = candidateResult;
+        const validForMinutes = Math.max(
+          1,
+          Math.round((new Date(candidate.lifecycle.expiresAt).getTime() - nowMs) / 60_000),
+        );
+        const riskModeLabel =
+          settings.riskMode === "FIXED_AMOUNT"
+            ? `$${settings.fixedRiskAmount.toFixed(2)} fixed`
+            : `${(settings.maxRiskPerTradePct * 100).toFixed(2)}% of equity`;
+
         await sendTelegramMessage(
-          formatCandidateMessage({
-            symbol,
-            score: evaluation.score.total,
-            regime: evaluation.regime,
-            riskAmount: candidate.risk.modeledMaxLoss,
-            riskReward: candidate.position.riskReward,
-            reason: describeReason(evaluation.score.components),
-          }),
+          formatCandidateMessage({ candidate, riskModeLabel, validForMinutes }),
+          { replyMarkup: buildCandidateKeyboard(insertedSignal.id, getAppUrl()) },
         ).catch(() => undefined);
       }
     } catch (err) {

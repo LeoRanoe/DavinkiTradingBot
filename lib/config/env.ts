@@ -45,6 +45,7 @@ const optionalSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: optionalString(),
   BYBIT_DEMO_API_KEY: optionalString(),
   BYBIT_DEMO_API_SECRET: optionalString(),
+  NEXT_PUBLIC_APP_URL: optionalUrl(),
 });
 
 const fullSchema = coreSchema.merge(optionalSchema);
@@ -119,4 +120,20 @@ export function getEnvStatus() {
     optional: Object.fromEntries(optionalKeys.map((k) => [k, present(k)])),
     valid: result.success,
   };
+}
+
+/**
+ * Public base URL of this deployment, used for Telegram "VIEW" deep links.
+ * Prefers an explicit NEXT_PUBLIC_APP_URL, then Vercel's own production/
+ * preview hostname. Returns null when nothing is configured, in which case
+ * the VIEW button is simply omitted rather than pointing somewhere wrong.
+ */
+export function getAppUrl(): string | null {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL;
+  if (explicit && explicit.length > 0) return explicit.replace(/\/$/, "");
+
+  const vercelHost = process.env.VERCEL_PROJECT_PRODUCTION_URL ?? process.env.VERCEL_URL;
+  if (vercelHost && vercelHost.length > 0) return `https://${vercelHost.replace(/\/$/, "")}`;
+
+  return null;
 }

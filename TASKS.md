@@ -39,5 +39,21 @@ so production candidates currently resolve to a typed `STRATEGY_NOT_APPROVED`
 rejection. Approving v1 for PAPER should follow backtest validation — it was
 deliberately not flipped to make candidates flow.
 
-Next: Milestone 2 (Telegram approval + paper position). See
-`docs/ORCHESTRATION_STATE.md` for full detail and the exact next action.
+## Task A — Milestone 2: Telegram approval + PAPER position lifecycle
+
+- [x] Additive migration: `OPENING`/`ERROR` candidate states, owner-decision audit columns, trade settlement columns, and a partial unique index guaranteeing one position per candidate. Applied and verified live.
+- [x] Approval flow built on ports: atomic PENDING -> OPENING claim, then full revalidation against a fresh ticker and fresh candles before anything opens.
+- [x] REJECT records `REJECTED_BY_OWNER` atomically and keeps the candidate for later counterfactual analysis.
+- [x] Telegram: actionable recommendation with real values and APPROVE/REJECT/VIEW, four-way callback authentication, no retry loop on internal error, News omitted rather than faked.
+- [x] `/signals/[id]` candidate detail as the VIEW target (authenticated).
+- [x] Automatic PAPER position management on the job's own cadence, not gated on a new strategy candle; atomic settlement, fees/slippage without double-counting, realized P/L and R, equity updated exactly once.
+- [x] 74 new tests including the end-to-end proof; 185/185 passing, typecheck/lint/build clean.
+- [x] Database guarantees verified directly against the live schema (atomic claim 1/0, duplicate position refused, LIVE refused, expiry sweep).
+- [x] `MILESTONE_2_COMPLETE = true`, `AUTOMATED_TRADING_CORE_READY = true`.
+
+Open for the owner: Strategy `v1` remains `DRAFT` on purpose. See
+`docs/STRATEGY_V1_PAPER_READINESS.md` — the honest recommendation is NOT YET,
+because zero backtests have ever been run.
+
+Next: Milestone 3 (News + Qwen). See `docs/ORCHESTRATION_STATE.md` for the
+exact next action.
