@@ -30,6 +30,7 @@ begin
     u.last_sign_in_at
   from auth.users u
   where u.deleted_at is null
+    and coalesce(u.raw_app_meta_data ->> 'role', 'guest') in ('owner', 'guest')
   order by u.created_at;
 end;
 $$;
@@ -68,14 +69,14 @@ begin
 
   insert into auth.users (
     instance_id, id, aud, role, email, encrypted_password,
-    email_confirmed_at, confirmed_at, confirmation_token, recovery_token,
+    email_confirmed_at, confirmation_token, recovery_token,
     email_change_token_new, email_change, raw_app_meta_data,
     raw_user_meta_data, created_at, updated_at
   ) values (
     '00000000-0000-0000-0000-000000000000', new_id, 'authenticated',
     'authenticated', normalized_email,
     extensions.crypt(p_password, extensions.gen_salt('bf')),
-    now_at, now_at, '', '', '', '',
+    now_at, '', '', '', '',
     jsonb_build_object('provider', 'email', 'providers', jsonb_build_array('email'), 'role', 'guest'),
     jsonb_build_object(
       'sub', new_id::text, 'email', normalized_email,
@@ -87,11 +88,11 @@ begin
 
   insert into auth.identities (
     provider_id, user_id, identity_data, provider,
-    last_sign_in_at, created_at, updated_at, email
+    last_sign_in_at, created_at, updated_at
   ) values (
     new_id::text, new_id,
     jsonb_build_object('sub', new_id::text, 'email', normalized_email, 'email_verified', true, 'phone_verified', false),
-    'email', now_at, now_at, now_at, lower(normalized_email)
+    'email', now_at, now_at, now_at
   );
 
   insert into public.audit_events (actor, action, metadata)
@@ -123,7 +124,7 @@ begin
 
   select u.email into guest_email
   from auth.users u
-  where u.id = p_user_id and coalesce(u.raw_app_meta_data ->> 'role', 'guest') <> 'owner';
+  where u.id = p_user_id and u.raw_app_meta_data ->> 'role' = 'guest';
   if guest_email is null then
     raise no_data_found using message = 'Guest not found';
   end if;
@@ -161,7 +162,7 @@ begin
 
   select u.email into guest_email
   from auth.users u
-  where u.id = p_user_id and coalesce(u.raw_app_meta_data ->> 'role', 'guest') <> 'owner';
+  where u.id = p_user_id and u.raw_app_meta_data ->> 'role' = 'guest';
   if guest_email is null then
     raise no_data_found using message = 'Guest not found';
   end if;

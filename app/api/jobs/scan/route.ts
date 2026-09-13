@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getCandles, getInstrumentMetadata } from "@/lib/bybit/client";
-import { createAdminClient } from "@/lib/supabase/server";
+import { createAdminClient, createBearerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import { evaluateSignal } from "@/lib/strategy/v1/signal";
 import { STRATEGY_V1_PARAMS, STRATEGY_V1_VERSION_LABEL } from "@/lib/strategy/v1/config";
@@ -30,15 +30,23 @@ export const maxDuration = 60;
  */
 export async function POST(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
-  if (!cronSecret) {
-    return NextResponse.json({ error: "CRON_SECRET is not configured on the server." }, { status: 500 });
-  }
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${cronSecret}`) {
+  const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+
+  let admin: SupabaseClient<Database> | null = null;
+  if (bearerToken) {
+    const scoped = createBearerClient(bearerToken);
+    const { data: { user } } = await scoped.auth.getUser(bearerToken);
+    if (user?.app_metadata?.role === "scanner") admin = scoped;
+  }
+  // Backward-compatible manual trigger. Scheduled production runs use the
+  // short-lived scanner JWT above and do not need a Vercel service-role key.
+  if (!admin && cronSecret && authHeader === `Bearer ${cronSecret}`) {
+    admin = createAdminClient();
+  }
+  if (!admin) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-
-  const admin = createAdminClient();
   const { data: jobRun, error: jobRunError } = await admin
     .from("job_runs")
     .insert({ job_name: "scan", status: "RUNNING" })
