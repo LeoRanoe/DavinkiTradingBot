@@ -32,13 +32,12 @@ Last updated: 2026-09-13
 
 - Vercel production deploys from `main`; owner and guest sessions were exercised in-browser.
 - Owner guest lifecycle: create, initial login, password reset, second login, and delete all succeeded.
-- The authenticated Edge proxy uses a dedicated scanner identity; it persisted current BTCUSDT/ETHUSDT data and produced a successful scan followed by an idempotent `NOOP`.
+- Supabase Cron uses an authenticated Edge proxy and dedicated scanner identity. It persisted current BTCUSDT/ETHUSDT data, produced an idempotent `NOOP`, and recovered from one missed tick with a successful 16:30 UTC run.
 - Qwen and Telegram configuration resolve from server-only environment fallbacks; Qwen's connection test completed.
 
 ## Remaining hardening
 
 - Replace the stale Vercel `SUPABASE_SECRET_KEY` with a key belonging to `xvklitfcesprzbnfslks`; current connected Supabase management access cannot reveal/rotate that key. This affects dashboard Vault writes and service-role-only webhook/paper mutations, not login, guest management, reads, or scheduled scans.
-- Restore Supabase management access and repair the Cron schedule: the verified run path stopped recording runs after 16:20 UTC.
 - Send a fresh Telegram test message and verify the webhook callback after that key is repaired.
 - Exercise one naturally occurring production paper candidate through entry and exit; the deterministic path is currently test-verified only.
 - Supabase leaked-password protection is still disabled at the project level.

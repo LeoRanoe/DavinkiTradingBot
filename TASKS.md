@@ -12,5 +12,4 @@
 - [x] Verify the deployed scanner/Edge path, idempotency, and Qwen configuration.
 - [x] Promote the verified repair to `staging` and `main` while preserving the Claude branch.
 - [ ] Replace the stale Vercel Supabase admin key, then retest Vault saves, Telegram callbacks, and privileged paper writes.
-- [ ] Restore the five-minute Supabase Cron schedule; production stopped recording runs after 16:20 UTC.
 - [ ] Send a fresh Telegram test message and observe a complete production paper trade when a real candidate occurs.

@@ -21,6 +21,6 @@ Last updated: 2026-09-13
 | Qwen | VERIFIED | Production resolves the server-only Vercel fallback and the connection test completes without affecting scanner execution. |
 | Telegram | PARTIAL | Production configuration resolves and owner restriction is implemented; no new outbound test message was sent during this audit. |
 | Dashboard-managed secrets | PARTIAL | Vault-first architecture is present, but the deployed `SUPABASE_SECRET_KEY` is stale, so saving a new connection or privileged webhook/paper writes still needs key repair. |
-| Supabase Cron | PARTIAL | Authenticated Edge path recorded `SUCCEEDED` then `NOOP`, but the production schedule stopped advancing after 16:20 UTC and needs scheduler access restored. |
+| Supabase Cron | VERIFIED | Authenticated Edge path recorded `SUCCEEDED`, idempotent `NOOP`, and a subsequent scheduled `SUCCEEDED` run at 16:30 UTC. One 16:25 tick was not recorded, then the schedule recovered. |
 | Vercel | VERIFIED | Production responds at the canonical URL, deploys `main`, and authenticated/unauthenticated route behavior was checked in-browser. |
 | Staging readiness | VERIFIED | The same repaired commit is present on `dev`, `staging`, and `main`; local release gate passes. |
