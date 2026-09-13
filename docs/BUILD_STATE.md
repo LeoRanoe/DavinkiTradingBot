@@ -119,3 +119,4 @@ Last updated: 2026-09-13 (autonomous build session 1, end of session)
 
 <!-- redeploy trigger: env vars added on Vercel 2026-09-13T10:22:22Z -->
 <!-- redeploy: core Supabase env vars confirmed in Vercel 2026-09-13T10:34:31Z -->
+<!-- redeploy: CRON_SECRET added 2026-09-13T10:39:19Z -->
