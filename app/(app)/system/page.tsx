@@ -65,13 +65,13 @@ export default async function SystemPage() {
           />
           <Row
             label="Qwen (AI coach)"
-            level={qwenConfig ? "HEALTHY" : "WARNING"}
-            detail={qwenConfig ? `Configured via ${qwenConfig.source}. Trading continues normally either way.` : "Not configured - explanations/lessons unavailable, trading unaffected."}
+            level={qwenConfig ? "UNKNOWN" : "WARNING"}
+            detail={qwenConfig ? `Configured via ${qwenConfig.source}; use Settings → Test connection for a live check. Trading continues normally either way.` : "Not configured - explanations/lessons unavailable, trading unaffected."}
           />
           <Row
             label="Telegram"
-            level={telegramConfig ? "HEALTHY" : "WARNING"}
-            detail={telegramConfig ? `Configured via ${telegramConfig.source}.` : "Not configured - notifications unavailable, dashboard unaffected."}
+            level={telegramConfig ? "UNKNOWN" : "WARNING"}
+            detail={telegramConfig ? `Configured via ${telegramConfig.source}; use Settings → Test connection for a live outbound check.` : "Not configured - notifications unavailable, dashboard unaffected."}
           />
           <Row
             label="Bybit Demo"
