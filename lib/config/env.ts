@@ -4,7 +4,14 @@ import { z } from "zod";
  * Server-side environment schema.
  *
  * Tiers:
- *  - core: required for the app to boot at all (Supabase connection).
+ *  - core: the two PUBLIC Supabase values. Required for literally anything
+ *    in the app to work (even an RLS-respecting, anon-key read), so getEnv()
+ *    throws if these are missing.
+ *  - admin: SUPABASE_SECRET_KEY. Required only for privileged, service-role
+ *    operations (cron writes, Vault, connection-settings writes) - kept
+ *    OUT of the core schema so ordinary authenticated dashboard pages (which
+ *    only ever need the public/anon client) keep working even before this
+ *    is configured. See getSupabaseSecretKey() / createAdminClient().
  *  - qwen / telegram / demo: optional integrations. Their absence must not
  *    crash the app — see lib/config/*.ts "getXConfiguration()" helpers which
  *    layer Supabase Vault overrides on top of these env fallbacks.
@@ -15,7 +22,6 @@ import { z } from "zod";
 const coreSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: z.string().min(1),
-  SUPABASE_SECRET_KEY: z.string().min(1),
 });
 
 // Env vars left blank (e.g. `QWEN_BASE_URL=` in .env.local, or an empty
@@ -47,8 +53,9 @@ let cached: Env | null = null;
 
 /**
  * Parses and validates process.env once per server process.
- * Throws only when CORE variables are missing/invalid - optional
- * integrations degrade gracefully instead (see integration status helpers).
+ * Throws only when the PUBLIC Supabase variables are missing/invalid -
+ * SUPABASE_SECRET_KEY and every optional integration degrade gracefully
+ * instead (see getSupabaseSecretKey() and the integration status helpers).
  */
 export function getEnv(): Env {
   if (cached) return cached;
@@ -64,6 +71,25 @@ export function getEnv(): Env {
   const full = fullSchema.parse(process.env);
   cached = full;
   return full;
+}
+
+/**
+ * The service-role secret key, required only for privileged server-side
+ * operations (createAdminClient()). Deliberately NOT part of getEnv()'s
+ * core schema - callers that only need an RLS-respecting client must keep
+ * working without it. Throws a specific, actionable error when accessed
+ * without it configured, rather than a generic "app can't start" error.
+ */
+export function getSupabaseSecretKey(): string {
+  const key = process.env.SUPABASE_SECRET_KEY;
+  if (!key) {
+    throw new Error(
+      "SUPABASE_SECRET_KEY is not configured. This operation requires privileged (service-role) " +
+        "Supabase access; ordinary authenticated reads do not. Set SUPABASE_SECRET_KEY in your " +
+        "environment (Supabase Dashboard -> Project Settings -> API -> service_role key).",
+    );
+  }
+  return key;
 }
 
 /**
@@ -87,6 +113,7 @@ export function getEnvStatus() {
 
   return {
     core: Object.fromEntries(coreKeys.map((k) => [k, present(k)])),
+    admin: { SUPABASE_SECRET_KEY: present("SUPABASE_SECRET_KEY") },
     optional: Object.fromEntries(optionalKeys.map((k) => [k, present(k)])),
     valid: result.success,
   };

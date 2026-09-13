@@ -2,7 +2,7 @@ import { createServerClient } from "@supabase/ssr";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { Database } from "./database.types";
-import { getEnv } from "@/lib/config/env";
+import { getEnv, getSupabaseSecretKey } from "@/lib/config/env";
 
 /**
  * Server Component / Route Handler Supabase client, scoped to the signed-in
@@ -43,7 +43,8 @@ export async function createClient() {
  */
 export function createAdminClient() {
   const env = getEnv();
-  return createSupabaseClient<Database>(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SECRET_KEY, {
+  const secretKey = getSupabaseSecretKey();
+  return createSupabaseClient<Database>(env.NEXT_PUBLIC_SUPABASE_URL, secretKey, {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }

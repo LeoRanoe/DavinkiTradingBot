@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { createAdminClient } from "@/lib/supabase/server";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
@@ -28,10 +27,11 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
-  const admin = createAdminClient();
+  // Both tables are readable by any authenticated user via RLS - no need
+  // for the privileged admin client just to render header status badges.
   const [{ data: settings }, { data: lastJob }] = await Promise.all([
-    admin.from("system_settings").select("trading_mode").eq("id", true).single(),
-    admin.from("job_runs").select("status, completed_at, started_at").eq("job_name", "scan").order("started_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("system_settings").select("trading_mode").eq("id", true).single(),
+    supabase.from("job_runs").select("status, completed_at, started_at").eq("job_name", "scan").order("started_at", { ascending: false }).limit(1).maybeSingle(),
   ]);
 
   const mode: TradingMode = settings?.trading_mode ?? "OBSERVE";
