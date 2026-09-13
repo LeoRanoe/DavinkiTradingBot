@@ -116,3 +116,5 @@ Last updated: 2026-09-13 (autonomous build session 1, end of session)
    every 5 minutes with `CRON_SECRET`.
 3. Register the Telegram webhook against the live URL with
    `TELEGRAM_WEBHOOK_SECRET`.
+
+<!-- redeploy trigger: env vars added on Vercel 2026-09-13T10:22:22Z -->
