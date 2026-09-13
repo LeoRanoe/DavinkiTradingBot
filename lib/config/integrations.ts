@@ -49,7 +49,8 @@ async function getIntegrationRow(integration: string) {
 
 /**
  * Resolves Qwen credentials: Supabase Vault (dashboard-configured) overrides
- * the QWEN_API_KEY environment variable. Returns null when neither is set -
+ * the QWEN_API_KEY environment variable (or its legacy QWEN_SECRET alias).
+ * Returns null when neither is set -
  * callers MUST treat that as "AI coach temporarily unavailable," never throw.
  */
 export async function getQwenConfiguration(): Promise<QwenConfiguration | null> {
@@ -66,9 +67,10 @@ export async function getQwenConfiguration(): Promise<QwenConfiguration | null> 
   }
 
   const env = getOptionalEnv();
-  if (env.QWEN_API_KEY) {
+  const envApiKey = env.QWEN_API_KEY ?? env.QWEN_SECRET;
+  if (envApiKey) {
     return {
-      apiKey: env.QWEN_API_KEY,
+      apiKey: envApiKey,
       baseUrl: env.QWEN_BASE_URL ?? DEFAULT_QWEN_BASE_URL,
       model: env.QWEN_MODEL ?? DEFAULT_QWEN_MODEL,
       source: "env",

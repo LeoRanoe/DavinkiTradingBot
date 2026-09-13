@@ -35,6 +35,8 @@ const optionalUrl = () => z.preprocess(blankToUndefined, z.string().url().option
 const optionalSchema = z.object({
   CRON_SECRET: z.preprocess(blankToUndefined, z.string().min(16).optional()),
   QWEN_API_KEY: optionalString(),
+  // Backward-compatible alias used by the existing Vercel project.
+  QWEN_SECRET: optionalString(),
   QWEN_BASE_URL: optionalUrl(),
   QWEN_MODEL: optionalString(),
   TELEGRAM_BOT_TOKEN: optionalString(),
