@@ -39,21 +39,41 @@ export async function POST(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  const { data: jobRun } = await admin
+  const { data: jobRun, error: jobRunError } = await admin
     .from("job_runs")
     .insert({ job_name: "scan", status: "RUNNING" })
     .select("id")
     .single();
 
-  const { data: strategyVersion } = await admin
+  if (jobRunError) {
+    // Most likely cause: SUPABASE_SECRET_KEY is invalid/mismatched, so even
+    // the service-role client can't authenticate. Surface the real reason
+    // instead of letting every downstream query fail with a misleading
+    // "not found" message.
+    return NextResponse.json(
+      { error: "Failed to write job_runs - check SUPABASE_SECRET_KEY", detail: jobRunError.message },
+      { status: 500 },
+    );
+  }
+
+  const { data: strategyVersion, error: strategyError } = await admin
     .from("strategy_versions")
     .select("id")
     .eq("version_label", STRATEGY_V1_VERSION_LABEL)
     .single();
 
   if (!strategyVersion) {
-    await finishJob(admin, jobRun?.id, "FAILED", 0, "Strategy V1 version row not found - run the seed migration.");
-    return NextResponse.json({ error: "Strategy version not seeded" }, { status: 500 });
+    await finishJob(
+      admin,
+      jobRun?.id,
+      "FAILED",
+      0,
+      `Strategy V1 version row not found: ${strategyError?.message ?? "unknown error"}`,
+    );
+    return NextResponse.json(
+      { error: "Strategy version not seeded", detail: strategyError?.message },
+      { status: 500 },
+    );
   }
 
   const { data: settings } = await admin.from("system_settings").select("signal_expiry_minutes").eq("id", true).single();
