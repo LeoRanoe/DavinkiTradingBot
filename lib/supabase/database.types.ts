@@ -1013,7 +1013,11 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      app_vault_get_secret: { Args: { secret_name: string }; Returns: string }
+      app_vault_set_secret: {
+        Args: { secret_name: string; secret_value: string }
+        Returns: undefined
+      }
     }
     Enums: {
       backtest_split: "DEVELOPMENT" | "VALIDATION" | "HOLDOUT"
