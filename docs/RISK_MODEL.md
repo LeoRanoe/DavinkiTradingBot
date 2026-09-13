@@ -35,6 +35,9 @@ human-readable detail string — never a bare "trade failed."
 field for an AI confidence score, explanation, or override. Qwen output is
 never read by any file under `lib/risk/`.
 
+## Research does not relax risk
+Risk-blocked candidates may be observed counterfactually as explicitly hypothetical research. A hypothetical winner never authorizes increasing size, changing a stop, or violating `MIN_ORDER_RISK_CONFLICT`.
+
 ## Signal expiry
 Telegram/dashboard approvals expire after `system_settings.signal_expiry_minutes`
 (default 30). An expired approval reruns the full risk engine and is rejected

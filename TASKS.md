@@ -21,6 +21,10 @@
       confirmed rendering (HTTP 200). Data-dependent pages still need env
       vars set - no MCP tool here can set them, so this is on the owner.
       See docs/MORNING_REPORT.md for the full checklist.
+- [x] Milestone 4: Controlled learning + strategy research (outcomes, MFE/MAE,
+      counterfactual isolation, aggregate metrics/evidence guards, post-trade
+      reviews, immutable experiment primitives, bounded Bybit research backfill,
+      and minimal `/learn` surface). V1 remains DRAFT.
 
 ## Immediate next steps (in order)
 1. **Owner: set these in Vercel -> davinki-trading-bot -> Settings ->

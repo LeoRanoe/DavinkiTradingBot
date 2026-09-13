@@ -20,9 +20,10 @@ export const qwenSignalExplanationSchema = z.object({
 
 export const qwenTradeReviewSchema = z.object({
   summary: z.string().min(1).max(400),
-  notes: z.array(qwenNoteSchema).min(1).max(8),
-  classification: z.enum(["VALID_LOSS", "VALID_WIN", "RULE_VIOLATION", "STRATEGY_ASSUMPTION_FAILED"]),
-  lesson: z.string().min(1).max(400),
+  observations: z.array(z.string().min(1).max(400)).max(6),
+  hypotheses: z.array(z.string().min(1).max(400)).max(4),
+  confidence: z.number().min(0).max(1),
+  dataLimitations: z.array(z.string().min(1).max(300)).max(6),
 });
 
 export type QwenNote = z.infer<typeof qwenNoteSchema>;

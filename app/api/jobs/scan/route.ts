@@ -160,7 +160,28 @@ export async function POST(request: NextRequest) {
           reason: describeReason(evaluation.score.components),
           approval_status: isCandidate ? "PENDING" : "NOT_APPLICABLE",
           expires_at: isCandidate ? new Date(Date.now() + expiryMinutes * 60_000).toISOString() : null,
-        })
+          // Immutable decision-time context. Historical analysis must not
+          // reconstruct a past decision from current settings or indicators.
+          decision_snapshot: {
+            signalCandleTimestamp: candleTimeIso,
+            candidateCreatedAt: new Date().toISOString(),
+            candidateExpiry: isCandidate ? new Date(Date.now() + expiryMinutes * 60_000).toISOString() : null,
+            strategyVersion: STRATEGY_V1_VERSION_LABEL,
+            symbol, venue: "BYBIT", marketType: "SPOT", timeframe: STRATEGY_V1_PARAMS.entryTimeframe,
+            score: evaluation.score.total, scoreComponents: evaluation.score.components,
+            classification: evaluation.score.classification, regime: evaluation.regime,
+            indicatorSnapshot: evaluation.score.components.map((component) => ({ name: component.name, detail: component.detail })),
+            volatility: evaluation.score.components.find((component) => component.name === "volatility")?.detail.atrPct ?? null,
+            plannedEntry: evaluation.score.entryPrice, allowedEntryRange: { min: evaluation.score.entryPrice, max: evaluation.score.entryPrice },
+            stop: evaluation.score.stopPrice, target: evaluation.score.targetPrice,
+            stopDistance: evaluation.score.stopPrice ? evaluation.score.entryPrice - evaluation.score.stopPrice : null,
+            plannedRiskReward: evaluation.score.riskReward, plannedR: evaluation.score.riskReward,
+            riskMode: "PENDING_RECHECK_ON_APPROVAL", configuredRisk: null, riskBudget: null, actualEstimatedRisk: null,
+            notional: null, quantity: null, modeledFees: null, modeledSlippage: null, modeledMaxLoss: null, estimatedTargetProfit: null,
+            newsEventIds: [], newsRisk: "UNKNOWN", newsSnapshot: null, ownerAction: null, ownerDecisionTime: null,
+            approvalDelay: null, finalCandidateState: "PENDING", rejectionReason: null, executionMode: null,
+          },
+        } as never)
         .select("id")
         .single();
 

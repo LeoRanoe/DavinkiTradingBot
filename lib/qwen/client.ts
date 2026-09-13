@@ -88,10 +88,11 @@ export async function explainSignal(input: {
 }
 
 const REVIEW_SYSTEM_PROMPT = `You are a trading coach reviewing a CLOSED trade whose outcome was already
-computed deterministically. Distinguish a valid losing trade (rules followed,
-outcome still negative) from a rule violation or a failed strategy assumption.
-Avoid hindsight language like "should have obviously known." Respond as JSON:
-{ "summary": string, "notes": [...], "classification": "VALID_LOSS"|"VALID_WIN"|"RULE_VIOLATION"|"STRATEGY_ASSUMPTION_FAILED", "lesson": string }.`;
+computed deterministically. You only provide AI INTERPRETATION and HYPOTHESES,
+never facts, decisions, parameter changes, risk changes, or activation advice.
+Avoid hindsight language. Respond as JSON: { "summary": string,
+"observations": string[], "hypotheses": string[], "confidence": number,
+"dataLimitations": string[] }. Every claim must be qualified by supplied data.`;
 
 export async function reviewTrade(input: {
   symbol: string;
@@ -102,6 +103,7 @@ export async function reviewTrade(input: {
   pnl: number;
   rMultiple: number;
   outcome: string;
+  factualReview?: unknown;
 }): Promise<QwenResult<QwenTradeReview>> {
   const result = await callQwen(REVIEW_SYSTEM_PROMPT, JSON.stringify(input));
   if (result.status !== "OK") return result;

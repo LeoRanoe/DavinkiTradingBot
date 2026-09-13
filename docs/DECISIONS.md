@@ -31,3 +31,4 @@
 - **Free-tier Supabase project.** Confirmed $0/month cost before creation
   (`get_cost` returned 0 for this org), so no user billing confirmation dialog
   was needed beyond the standard cost-confirmation call.
+- **Learning is evidence collection, not autonomous adaptation.** Actual and counterfactual outcomes use separate tables and never share portfolio truth. Qwen may label hypotheses but cannot modify risk, parameters, activation, or trade execution. V1 stays immutable and DRAFT.

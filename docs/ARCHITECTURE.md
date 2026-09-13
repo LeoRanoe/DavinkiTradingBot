@@ -19,7 +19,8 @@
 9. **Notifications** (`lib/telegram/`) - webhook + outbound messages; approvals
    re-run the full risk engine, they are never execution authority by themselves.
 10. **UI** (`app/`, `components/`) - Next.js App Router, Server Components by
-    default, shadcn/ui + TanStack Table + Recharts + lightweight-charts.
+   default, shadcn/ui + TanStack Table + Recharts + lightweight-charts.
+11. **Controlled learning** (`lib/learning/`) - pure outcome, counterfactual, analytics, experiment, and research-backfill functions. It consumes trading facts; no strategy/risk/execution file imports Qwen or learning hypotheses.
 
 ## Data flow (scan cycle)
 Supabase Cron -> `POST /api/jobs/scan` (CRON_SECRET) -> for each symbol: fetch

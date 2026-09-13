@@ -97,6 +97,12 @@ Last updated: 2026-09-13 (autonomous build session 1, end of session)
   chat). Must be copied into Vercel env vars, and Supabase Cron must be
   configured to call `/api/jobs/scan` with the same `CRON_SECRET`.
 
+## Milestone 4 (complete in code; migration pending deployment)
+- Added immutable candidate decision snapshots, factual actual-trade outcome capture (gross/net P&L, equity snapshots, MFE/MAE, factual review), and separately queued counterfactual research for owner/risk rejections.
+- Added deterministic performance analytics, explicit evidence labels, chronological split/walk-forward guards, paper-readiness governance, and Zod-validated Qwen interpretation with no execution/activation authority.
+- Added bounded, resumable research-only Bybit historical backfill primitives. No real V1 historical backtest was run or claimed: data remains insufficient in the current environment.
+- **Migration `00000000000007_learning_layer.sql` must be applied** in Supabase before the new persistence fields/tables exist in production.
+
 ## Not yet done
 - Supabase Cron job itself (the `pg_cron`/`pg_net` schedule calling
   `/api/jobs/scan`) - needs a stable deployment URL first.

@@ -137,7 +137,7 @@ export async function approveAndExecuteSignal(
 
   await admin
     .from("signals")
-    .update({ approval_status: "APPROVED", approved_at: new Date().toISOString() })
+    .update({ approval_status: "APPROVED", approved_at: new Date().toISOString(), owner_decision_at: new Date().toISOString() } as never)
     .eq("id", signalId);
 
   await admin.from("trade_events").insert({
@@ -155,7 +155,7 @@ export async function rejectSignalManually(signalId: string, actor: "dashboard" 
   const admin = createAdminClient();
   await admin
     .from("signals")
-    .update({ approval_status: "REJECTED" })
+    .update({ approval_status: "REJECTED", owner_decision_at: new Date().toISOString() } as never)
     .eq("id", signalId)
     .eq("approval_status", "PENDING");
   await logAudit(admin, actor, "signal_rejected_by_user", { signalId });
@@ -164,10 +164,9 @@ export async function rejectSignalManually(signalId: string, actor: "dashboard" 
 async function rejectSignal(admin: SupabaseClient<Database>, signalId: string, reason: RejectionReason) {
   await admin
     .from("signals")
-    .update({ approval_status: "REJECTED" })
+    .update({ approval_status: "REJECTED", owner_decision_at: new Date().toISOString(), owner_rejection_reason: reason } as never)
     .eq("id", signalId)
     .eq("approval_status", "PENDING");
-  void reason;
 }
 
 async function logAudit(
