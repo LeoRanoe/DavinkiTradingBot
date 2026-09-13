@@ -1,5 +1,4 @@
-import { createAdminClient } from "@/lib/supabase/server";
-import { getVaultSecret } from "./vault";
+import { createClient } from "@/lib/supabase/server";
 import { getOptionalEnv } from "./env";
 
 export type IntegrationSource = "vault" | "env" | "none";
@@ -30,19 +29,19 @@ const DEFAULT_QWEN_MODEL = "qwen-turbo";
 
 async function getIntegrationRow(integration: string) {
   try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("integration_credentials")
-      .select("config, vault_secret_name")
-      .eq("integration", integration)
-      .maybeSingle();
-    return data;
+    const client = await createClient();
+    const rpc = client as unknown as {
+      rpc: (name: string, args: Record<string, unknown>) => Promise<{
+        data: { config?: Record<string, string>; secret?: string } | null;
+        error: { message: string } | null;
+      }>;
+    };
+    const { data, error } = await rpc.rpc("owner_get_integration_configuration", { p_integration: integration });
+    return error ? null : data;
   } catch {
-    // Supabase itself may not be fully configured yet (e.g. SUPABASE_SECRET_KEY
-    // missing), or the lookup may fail for other reasons. Either way, a
-    // dashboard-managed override is just unavailable - fall through to the
-    // environment-variable fallback rather than crashing the whole
-    // configuration resolution (spec: integrations must degrade gracefully).
+    // The caller may have no owner session (for example, the scanner), or
+    // Vault may be unavailable. Fall through to the environment fallback
+    // rather than crashing the core trading path.
     return null;
   }
 }
@@ -55,13 +54,13 @@ async function getIntegrationRow(integration: string) {
  */
 export async function getQwenConfiguration(): Promise<QwenConfiguration | null> {
   const row = await getIntegrationRow("qwen");
-  const vaultKey = row?.vault_secret_name ? await getVaultSecret(row.vault_secret_name) : null;
+  const vaultKey = row?.secret ?? null;
 
   if (vaultKey) {
     return {
       apiKey: vaultKey,
-      baseUrl: (row?.config as Record<string, string> | null)?.baseUrl ?? DEFAULT_QWEN_BASE_URL,
-      model: (row?.config as Record<string, string> | null)?.model ?? DEFAULT_QWEN_MODEL,
+      baseUrl: row?.config?.baseUrl ?? DEFAULT_QWEN_BASE_URL,
+      model: row?.config?.model ?? DEFAULT_QWEN_MODEL,
       source: "vault",
     };
   }
@@ -82,8 +81,8 @@ export async function getQwenConfiguration(): Promise<QwenConfiguration | null> 
 
 export async function getTelegramConfiguration(): Promise<TelegramConfiguration | null> {
   const row = await getIntegrationRow("telegram");
-  const vaultToken = row?.vault_secret_name ? await getVaultSecret(row.vault_secret_name) : null;
-  const config = (row?.config as Record<string, string> | null) ?? null;
+  const vaultToken = row?.secret ?? null;
+  const config = row?.config ?? null;
 
   if (vaultToken) {
     return {
@@ -110,15 +109,8 @@ export async function getTelegramConfiguration(): Promise<TelegramConfiguration 
 }
 
 export async function getBybitDemoConfiguration(): Promise<BybitDemoConfiguration> {
-  const row = await getIntegrationRow("bybit_demo");
-  const vaultKey = row?.vault_secret_name ? await getVaultSecret(row.vault_secret_name) : null;
-  const config = (row?.config as Record<string, string> | null) ?? null;
-
-  if (vaultKey && config?.apiSecretVaultName) {
-    const apiSecret = await getVaultSecret(config.apiSecretVaultName);
-    if (apiSecret) return { apiKey: vaultKey, apiSecret, source: "vault" };
-  }
-
+  // Bybit Demo dashboard credentials are intentionally not implemented in
+  // this build; environment fallback remains the only supported source.
   const env = getOptionalEnv();
   if (env.BYBIT_DEMO_API_KEY && env.BYBIT_DEMO_API_SECRET) {
     return { apiKey: env.BYBIT_DEMO_API_KEY, apiSecret: env.BYBIT_DEMO_API_SECRET, source: "env" };

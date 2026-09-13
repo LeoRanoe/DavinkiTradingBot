@@ -24,8 +24,9 @@ const DEFAULT_SLIPPAGE_BPS = 5;
 export async function approveAndExecuteSignal(
   signalId: string,
   actor: "dashboard" | "telegram",
+  scopedClient?: SupabaseClient<Database>,
 ): Promise<ExecutionOutcome> {
-  const admin = createAdminClient();
+  const admin = scopedClient ?? createAdminClient();
 
   const { data: signal } = await admin.from("signals").select("*").eq("id", signalId).maybeSingle();
   if (!signal) return { kind: "NOT_APPLICABLE", reason: "Signal not found." };
@@ -151,8 +152,12 @@ export async function approveAndExecuteSignal(
   return { kind: "EXECUTED", tradeId: trade.id };
 }
 
-export async function rejectSignalManually(signalId: string, actor: "dashboard" | "telegram"): Promise<void> {
-  const admin = createAdminClient();
+export async function rejectSignalManually(
+  signalId: string,
+  actor: "dashboard" | "telegram",
+  scopedClient?: SupabaseClient<Database>,
+): Promise<void> {
+  const admin = scopedClient ?? createAdminClient();
   await admin
     .from("signals")
     .update({ approval_status: "REJECTED" })

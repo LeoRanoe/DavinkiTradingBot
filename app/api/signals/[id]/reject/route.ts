@@ -12,6 +12,6 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
   if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
   const { id } = await params;
-  await rejectSignalManually(id, "dashboard");
+  await rejectSignalManually(id, "dashboard", supabase);
   return NextResponse.json({ ok: true });
 }

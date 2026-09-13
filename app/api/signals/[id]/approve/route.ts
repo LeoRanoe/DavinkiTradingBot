@@ -13,6 +13,6 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
   if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
   const { id } = await params;
-  const outcome = await approveAndExecuteSignal(id, "dashboard");
+  const outcome = await approveAndExecuteSignal(id, "dashboard", supabase);
   return NextResponse.json(outcome);
 }

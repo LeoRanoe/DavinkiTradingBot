@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { setVaultSecret } from "@/lib/config/vault";
+import { createClient } from "@/lib/supabase/server";
 import { getQwenConfiguration, getTelegramConfiguration } from "@/lib/config/integrations";
 import { isOwner } from "@/lib/auth/authorization";
 
@@ -36,69 +35,20 @@ export async function POST(request: NextRequest) {
   const parsed = bodySchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
 
-  const admin = createAdminClient();
   const body = parsed.data;
-
-  if (body.integration === "qwen") {
-    if (body.apiKey) {
-      const secretName = "qwen_api_key";
-      await setVaultSecret(secretName, body.apiKey);
-      await admin.from("integration_credentials").upsert(
-        {
-          integration: "qwen",
-          vault_secret_name: secretName,
-          config: { baseUrl: body.baseUrl, model: body.model } as never,
-          status: "CONFIGURED",
-          updated_by: user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "integration" },
-      );
-    } else {
-      // Config-only update (base URL / model) without touching the secret.
-      await admin.from("integration_credentials").upsert(
-        {
-          integration: "qwen",
-          config: { baseUrl: body.baseUrl, model: body.model } as never,
-          updated_by: user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "integration" },
-      );
-    }
-  } else {
-    if (body.botToken) {
-      const secretName = "telegram_bot_token";
-      await setVaultSecret(secretName, body.botToken);
-      await admin.from("integration_credentials").upsert(
-        {
-          integration: "telegram",
-          vault_secret_name: secretName,
-          config: { ownerUserId: body.ownerUserId, chatId: body.chatId } as never,
-          status: "CONFIGURED",
-          updated_by: user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "integration" },
-      );
-    } else {
-      await admin.from("integration_credentials").upsert(
-        {
-          integration: "telegram",
-          config: { ownerUserId: body.ownerUserId, chatId: body.chatId } as never,
-          updated_by: user.id,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: "integration" },
-      );
-    }
-  }
-
-  await admin.from("audit_events").insert({
-    actor: user.email ?? user.id,
-    action: "integration_credentials_updated",
-    metadata: { integration: body.integration, credential_source: "vault" },
+  const rpc = supabase as unknown as {
+    rpc: (name: string, args: Record<string, unknown>) => Promise<{ error: { message: string } | null }>;
+  };
+  const secret = body.integration === "qwen" ? body.apiKey : body.botToken;
+  const config = body.integration === "qwen"
+    ? { baseUrl: body.baseUrl, model: body.model }
+    : { ownerUserId: body.ownerUserId, chatId: body.chatId };
+  const { error } = await rpc.rpc("owner_set_integration_configuration", {
+    p_integration: body.integration,
+    p_secret: secret ?? null,
+    p_config: Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined)),
   });
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
   return NextResponse.json({ ok: true });
 }
