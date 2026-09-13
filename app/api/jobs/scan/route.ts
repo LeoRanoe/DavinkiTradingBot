@@ -10,6 +10,15 @@ import { sendTelegramMessage, formatCandidateMessage } from "@/lib/telegram/clie
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
+// Bybit's public API geo-blocks several regions/countries at the CloudFront
+// layer (confirmed during development: "The Amazon CloudFront distribution
+// is configured to block access from your country"). Vercel's default
+// region (iad1, US East) is commonly affected. Pin this route to a region
+// Bybit generally serves; also set in vercel.json for platforms that don't
+// honor this per-route hint. If job_runs still shows Bybit errors after
+// deploying, change the Vercel project's Function Region in the dashboard
+// (Project Settings -> Functions) to Singapore/Tokyo/Frankfurt.
+export const preferredRegion = "sin1";
 
 /**
  * Supabase Cron entrypoint (spec #52). Runs roughly every 5 minutes.

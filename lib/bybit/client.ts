@@ -44,6 +44,19 @@ async function bybitFetch(path: string, params: Record<string, string>): Promise
     if (res.status === 429) {
       throw new BybitApiError("Bybit rate limit exceeded (HTTP 429)");
     }
+    if (res.status === 403) {
+      // Bybit's CloudFront layer geo-blocks some countries/regions entirely,
+      // returning a plain-text (not JSON) 403 body. Surface this distinctly
+      // so it's diagnosable from job_runs.error_summary rather than looking
+      // like a generic HTTP failure - the fix is a Vercel function region
+      // change, not a code change.
+      const body = await res.text().catch(() => "");
+      throw new BybitApiError(
+        `Bybit HTTP 403 - likely a geo-restriction on the calling server's region/country. ` +
+          `If this persists, change the Vercel project's Function Region to one Bybit serves ` +
+          `(e.g. Singapore/Tokyo), not a code issue. Response: ${body.slice(0, 200)}`,
+      );
+    }
     if (!res.ok) {
       throw new BybitApiError(`Bybit HTTP error ${res.status}`);
     }

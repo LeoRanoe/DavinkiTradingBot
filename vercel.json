@@ -1,0 +1,8 @@
+{
+  "regions": ["sin1"],
+  "functions": {
+    "app/api/jobs/scan/route.ts": {
+      "regions": ["sin1"]
+    }
+  }
+}
