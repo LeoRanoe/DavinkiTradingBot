@@ -46,6 +46,15 @@
   --radius-2xl: calc(var(--radius) * 1.8);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+  --color-positive: var(--positive);
+  --color-positive-foreground: var(--positive-foreground);
+  --color-negative: var(--negative);
+  --color-negative-foreground: var(--negative-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --font-mono-tabular: var(--font-geist-mono);
 }
 
 :root {
@@ -81,6 +90,14 @@
   --sidebar-accent-foreground: oklch(0.205 0 0);
   --sidebar-border: oklch(0.922 0 0);
   --sidebar-ring: oklch(0.708 0 0);
+  --positive: oklch(0.55 0.14 152);
+  --positive-foreground: oklch(0.99 0 0);
+  --negative: oklch(0.55 0.19 27);
+  --negative-foreground: oklch(0.99 0 0);
+  --warning: oklch(0.75 0.15 75);
+  --warning-foreground: oklch(0.2 0 0);
+  --info: oklch(0.55 0.14 245);
+  --info-foreground: oklch(0.99 0 0);
 }
 
 .dark {
@@ -115,6 +132,14 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+  --positive: oklch(0.72 0.17 152);
+  --positive-foreground: oklch(0.145 0.02 152);
+  --negative: oklch(0.7 0.19 25);
+  --negative-foreground: oklch(0.145 0.02 25);
+  --warning: oklch(0.8 0.15 85);
+  --warning-foreground: oklch(0.145 0 0);
+  --info: oklch(0.72 0.14 245);
+  --info-foreground: oklch(0.145 0.02 245);
 }
 
 @layer base {
