@@ -1,7 +1,14 @@
 import type { TradingMode } from "@/lib/types/trading-mode";
 import { checkAccountLimits } from "./limits";
-import { computePositionSize } from "./position-sizing";
-import type { AccountState, InstrumentRules, RiskDecision, RiskLimits, TradeProposal } from "./types";
+import { computePositionSizeFromBudget, resolveRiskBudget } from "./position-sizing";
+import type {
+  AccountState,
+  CostModel,
+  InstrumentRules,
+  RiskDecision,
+  RiskLimits,
+  TradeProposal,
+} from "./types";
 
 export type RiskEngineInput = {
   tradingMode: TradingMode;
@@ -11,6 +18,8 @@ export type RiskEngineInput = {
   limits: RiskLimits;
   instrument: InstrumentRules;
   signalExpired: boolean;
+  /** Fee/slippage assumptions applied to modeled loss/profit. Defaults to zero cost for legacy callers. */
+  costModel?: CostModel;
 };
 
 /**
@@ -22,7 +31,7 @@ export type RiskEngineInput = {
  * Evaluation order matters: cheapest/most-fundamental checks first.
  */
 export function evaluateTradeRisk(input: RiskEngineInput): RiskDecision {
-  const { tradingMode, strategyApproved, proposal, account, limits, instrument, signalExpired } = input;
+  const { tradingMode, strategyApproved, proposal, account, limits, instrument, signalExpired, costModel } = input;
 
   if (tradingMode === "LIVE") {
     // Defense in depth: LIVE must never be reachable, but if it somehow is,
@@ -47,5 +56,16 @@ export function evaluateTradeRisk(input: RiskEngineInput): RiskDecision {
     return { approved: false, reason: limitReason, detail: `Blocked by account risk limit: ${limitReason}.` };
   }
 
-  return computePositionSize(proposal, account, limits.maxRiskPerTradePct, instrument);
+  const riskBudget = resolveRiskBudget(account, limits);
+  const decision = computePositionSizeFromBudget(proposal, account, riskBudget, instrument, costModel);
+
+  if (decision.approved && limits.minRiskReward !== undefined && decision.sizing.riskReward < limits.minRiskReward) {
+    return {
+      approved: false,
+      reason: "MIN_RISK_REWARD_NOT_MET",
+      detail: `Risk/reward ${decision.sizing.riskReward.toFixed(2)} is below the configured minimum ${limits.minRiskReward.toFixed(2)}.`,
+    };
+  }
+
+  return decision;
 }

@@ -36,6 +36,22 @@ Last updated: 2026-09-13
 - Qwen and Telegram configuration resolve from server-only environment fallbacks; Qwen's connection test completed.
 - Owner-scoped integration configuration and PAPER write policies are live; a production Qwen configuration save succeeded without the stale admin key.
 
+## Task A — Milestone 1 (owner risk + complete trade candidate)
+
+- Deterministic library layer complete and tested: `lib/risk/` gained
+  owner-configurable risk modes (percent-of-equity / fixed-amount),
+  available-capital capping, fee/slippage-aware modeled loss, entry
+  protection (allowed entry zone, expiry, staleness), and deterministic
+  volatility protection. `lib/candidates/` assembles the full "complete
+  candidate" object the spec describes, or a precise typed rejection.
+- All additive: every existing function signature, the mandatory spec #42
+  test, and all 52 previously-passing tests are unchanged and still pass.
+- 84/84 tests passing (52 existing + 32 new); typecheck, lint, and
+  production build all clean.
+- Not yet wired into the production schema, scan job, or UI - see
+  `docs/ORCHESTRATION_STATE.md` for the exact next action and rationale for
+  deferring persistence/wiring to the start of Milestone 2.
+
 ## Remaining hardening
 
 - Replace or remove the stale Vercel `SUPABASE_SECRET_KEY`. Owner Vault saves, dashboard PAPER writes, guest management, and scans no longer depend on it; the remaining dependency is Telegram callback execution and the manual Cron fallback.

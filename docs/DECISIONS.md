@@ -31,3 +31,28 @@
 - **Free-tier Supabase project.** Confirmed $0/month cost before creation
   (`get_cost` returned 0 for this org), so no user billing confirmation dialog
   was needed beyond the standard cost-confirmation call.
+- **Milestone 1 shipped as a pure `lib/` layer, no schema/scan-job/UI wiring
+  yet.** `resolveRiskBudget`/`computePositionSizeFromBudget` and
+  `buildTradeCandidate()` are fully deterministic and unit-tested against
+  fixtures, which is what the milestone's acceptance criterion actually
+  requires. Touching the production Supabase schema and the live scan job
+  is deferred to Milestone 2's opening work, so a real schema change lands
+  deliberately, in the same pass as the code that actually needs it, rather
+  than speculatively alongside brand-new risk math.
+- **One risk-sizing primitive, not two.** `computePositionSizeFromBudget`
+  is the only place spot position sizing happens; legacy
+  `computePositionSize(pct)` (used by the backtester and paper execution)
+  is now a thin wrapper that computes `riskBudget = equity * pct` and
+  delegates. `FIXED_AMOUNT` risk mode reuses the exact same function with a
+  different budget - no parallel sizing logic.
+- **`RiskLimits`/`AccountState`/`PositionSizing` extended with optional
+  fields, not replaced.** `riskMode`, `fixedRiskAmount`, `minCandidateScore`,
+  `minRiskReward`, `availableBalance`, and the new fee/slippage/modeled-loss
+  fields are additive; every existing caller (`lib/trading/execute.ts`,
+  `lib/backtest/engine.ts`) and the mandatory spec #42 test are unchanged
+  and still pass.
+- **Candidate lifecycle reuses existing state, no second state machine.**
+  `lib/candidates/types.ts` documents `CandidateState` as the full spec
+  union, but explicitly says the DB-level truth stays `signal_approval_status`
+  + `trade_status` (already in the schema) - Milestone 2's wiring should
+  derive/extend those, never add a parallel table of trade states.

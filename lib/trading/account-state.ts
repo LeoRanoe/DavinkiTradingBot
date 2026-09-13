@@ -52,6 +52,9 @@ export async function computeAccountState(
 
   return {
     equity,
+    // PAPER/DEMO simulate a single cash balance equal to equity (no margin,
+    // no separate custody) - available balance and equity coincide today.
+    availableBalance: equity,
     openPositionsCount: openCount ?? 0,
     tradesOpenedTodayUtc,
     losingTradesTodayUtc,
