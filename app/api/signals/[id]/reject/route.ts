@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { rejectSignalManually } from "@/lib/trading/execute";
+import { isOwner } from "@/lib/auth/authorization";
 
 export async function POST(_request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const supabase = await createClient();
@@ -8,6 +9,7 @@ export async function POST(_request: NextRequest, { params }: { params: Promise<
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
   const { id } = await params;
   await rejectSignalManually(id, "dashboard");

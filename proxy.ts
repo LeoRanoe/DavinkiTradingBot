@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from "next/server";
  * Refreshes the Supabase auth session cookie on every request.
  * Required for @supabase/ssr in the Next.js App Router.
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;

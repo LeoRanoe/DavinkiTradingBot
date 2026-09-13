@@ -2,9 +2,11 @@ import { createClient } from "@/lib/supabase/server";
 import { SignalsTable } from "@/components/tables/signals-table";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Radar } from "lucide-react";
+import { getUserRole } from "@/lib/auth/authorization";
 
 export default async function SignalsPage() {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
   const { data: signals } = await supabase
     .from("signals")
     .select("id, symbol, candle_time, score, classification, regime, risk_reward, approval_status, reason")
@@ -20,7 +22,7 @@ export default async function SignalsPage() {
         </p>
       </div>
       {signals && signals.length > 0 ? (
-        <SignalsTable data={signals} />
+        <SignalsTable data={signals} canManage={user ? getUserRole(user) === "owner" : false} />
       ) : (
         <EmptyState
           icon={Radar}

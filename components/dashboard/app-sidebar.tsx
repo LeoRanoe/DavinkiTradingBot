@@ -14,6 +14,7 @@ import {
   GraduationCap,
   Activity,
   Settings,
+  Users,
 } from "lucide-react";
 import {
   Sidebar,
@@ -41,7 +42,7 @@ const NAV_ITEMS = [
   { title: "System", url: "/system", icon: Activity },
 ];
 
-export function AppSidebar() {
+export function AppSidebar({ role }: { role: "owner" | "guest" }) {
   const pathname = usePathname();
 
   return (
@@ -77,12 +78,22 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
-      <SidebarFooter>
+      {role === "owner" ? <SidebarFooter>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton
+              render={<Link href="/settings/access" />}
+              isActive={pathname.startsWith("/settings/access")}
+              tooltip="Guest access"
+            >
+              <Users />
+              <span>Guest access</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
               render={<Link href="/settings/connections" />}
-              isActive={pathname.startsWith("/settings")}
+              isActive={pathname.startsWith("/settings/connections")}
               tooltip="Settings"
             >
               <Settings />
@@ -90,7 +101,7 @@ export function AppSidebar() {
             </SidebarMenuButton>
           </SidebarMenuItem>
         </SidebarMenu>
-      </SidebarFooter>
+      </SidebarFooter> : null}
     </Sidebar>
   );
 }

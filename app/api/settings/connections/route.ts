@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { setVaultSecret } from "@/lib/config/vault";
 import { getQwenConfiguration, getTelegramConfiguration } from "@/lib/config/integrations";
+import { isOwner } from "@/lib/auth/authorization";
 
 const bodySchema = z.discriminatedUnion("integration", [
   z.object({
@@ -30,6 +31,7 @@ export async function POST(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
   const parsed = bodySchema.safeParse(await request.json());
   if (!parsed.success) return NextResponse.json({ error: "Invalid input" }, { status: 400 });
@@ -102,6 +104,11 @@ export async function POST(request: NextRequest) {
 }
 
 export async function GET() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
+
   const [qwen, telegram] = await Promise.all([getQwenConfiguration(), getTelegramConfiguration()]);
   return NextResponse.json({
     qwen: qwen ? { configured: true, source: qwen.source, baseUrl: qwen.baseUrl, model: qwen.model } : { configured: false },

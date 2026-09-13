@@ -91,6 +91,23 @@ export async function POST(request: NextRequest) {
         getCandles(symbol, "15M", 260),
       ]);
 
+      const latestClosed15m = candles15m.findLast((candle) => candle.isClosed);
+      if (!latestClosed15m) {
+        errors.push(`${symbol}: no closed 15-minute candle returned`);
+        continue;
+      }
+
+      // Check this before persisting the fetched batch. The candles table is
+      // also our durable scan watermark, including IGNORE outcomes for which
+      // no signal row is intentionally stored.
+      const { data: existingCandle } = await admin
+        .from("candles")
+        .select("id")
+        .eq("symbol", symbol)
+        .eq("timeframe", "15M")
+        .eq("open_time", new Date(latestClosed15m.openTime).toISOString())
+        .maybeSingle();
+
       // Best-effort instrument metadata refresh (dynamic, never hard-coded).
       try {
         const meta = await getInstrumentMetadata(symbol);
@@ -133,6 +150,8 @@ export async function POST(request: NextRequest) {
       }
 
       tradesClosed += await checkAndCloseOpenTrades(admin, symbol, candles15m);
+
+      if (existingCandle) continue;
 
       const evaluation = evaluateSignal(symbol, candles1h, candles15m);
       recordsProcessed += 1;
@@ -206,7 +225,11 @@ export async function POST(request: NextRequest) {
     }
   }
 
-  const status = errors.length > 0 && recordsProcessed === 0 ? "FAILED" : "SUCCEEDED";
+  const status = errors.length > 0 && recordsProcessed === 0
+    ? "FAILED"
+    : recordsProcessed === 0 && tradesClosed === 0
+      ? "NOOP"
+      : "SUCCEEDED";
   await finishJob(admin, jobRun?.id, status, recordsProcessed, errors.join("; ") || null, {
     signalsFound,
     tradesClosed,

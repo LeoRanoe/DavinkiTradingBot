@@ -62,7 +62,7 @@ const columns: ColumnDef<SignalRow>[] = [
   },
 ];
 
-export function SignalsTable({ data }: { data: SignalRow[] }) {
+export function SignalsTable({ data, canManage }: { data: SignalRow[]; canManage: boolean }) {
   const router = useRouter();
   const [pending, setPending] = useState<string | null>(null);
   const table = useReactTable({ data, columns, getCoreRowModel: getCoreRowModel() });
@@ -95,7 +95,7 @@ export function SignalsTable({ data }: { data: SignalRow[] }) {
                   {flexRender(header.column.columnDef.header, header.getContext())}
                 </TableHead>
               ))}
-              <TableHead className="text-right">Actions</TableHead>
+              {canManage ? <TableHead className="text-right">Actions</TableHead> : null}
             </TableRow>
           ))}
         </TableHeader>
@@ -105,7 +105,7 @@ export function SignalsTable({ data }: { data: SignalRow[] }) {
               {row.getVisibleCells().map((cell) => (
                 <TableCell key={cell.id}>{flexRender(cell.column.columnDef.cell, cell.getContext())}</TableCell>
               ))}
-              <TableCell className="text-right">
+              {canManage ? <TableCell className="text-right">
                 {row.original.approval_status === "PENDING" ? (
                   <div className="flex justify-end gap-2">
                     <Button
@@ -126,7 +126,7 @@ export function SignalsTable({ data }: { data: SignalRow[] }) {
                     </Button>
                   </div>
                 ) : null}
-              </TableCell>
+              </TableCell> : null}
             </TableRow>
           ))}
         </TableBody>

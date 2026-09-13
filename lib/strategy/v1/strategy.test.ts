@@ -81,12 +81,21 @@ describe("evaluateSignal - closed candle invariant", () => {
   const closes1h = Array.from({ length: 250 }, (_, i) => 100 + i * 0.5);
   const closes15m = Array.from({ length: 260 }, (_, i) => 100 + i * 0.1);
 
-  it("refuses to evaluate when the last 15M candle is not closed", () => {
+  it("ignores a trailing open candle and evaluates only the latest closed 15M candle", () => {
     const candles1h = makeCandles("BTCUSDT", "1H", closes1h);
     const candles15m = makeCandles("BTCUSDT", "15M", closes15m, { lastClosed: false });
     const result = evaluateSignal("BTCUSDT", candles1h, candles15m);
-    expect(result.kind).toBe("NO_SIGNAL");
-    if (result.kind === "NO_SIGNAL") expect(result.reason).toBe("INCOMPLETE_CANDLE");
+    expect(result.kind).toBe("SIGNAL");
+    if (result.kind === "SIGNAL") {
+      expect(result.candleTime).toBe(candles15m[candles15m.length - 2].openTime);
+    }
+  });
+
+  it("does not evaluate when every 15M candle is still open", () => {
+    const candles1h = makeCandles("BTCUSDT", "1H", closes1h);
+    const candles15m = makeCandles("BTCUSDT", "15M", [100], { lastClosed: false });
+    const result = evaluateSignal("BTCUSDT", candles1h, candles15m);
+    expect(result).toEqual({ kind: "NO_SIGNAL", reason: "MISSING_MARKET_DATA" });
   });
 
   it("refuses to evaluate without a bullish 1H regime", () => {

@@ -5,6 +5,7 @@ import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 import type { SystemHealthLevel } from "@/components/dashboard/system-status-badge";
 import type { TradingMode } from "@/lib/types/trading-mode";
+import { getUserRole } from "@/lib/auth/authorization";
 
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
@@ -27,6 +28,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     redirect("/login");
   }
 
+  const role = getUserRole(user);
+
   // Both tables are readable by any authenticated user via RLS - no need
   // for the privileged admin client just to render header status badges.
   const [{ data: settings }, { data: lastJob }] = await Promise.all([
@@ -45,12 +48,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <SidebarProvider>
-      <AppSidebar />
+      <AppSidebar role={role} />
       <div className="flex min-h-svh flex-1 flex-col">
         <DashboardHeader
           mode={mode}
           scannerHealth={scannerHealth}
           lastScanLabel={relativeTime(lastJob?.started_at ?? null)}
+          email={user.email ?? "Signed in"}
+          role={role}
         />
         <main className="flex-1 space-y-6 p-4 md:p-6">{children}</main>
       </div>

@@ -4,7 +4,7 @@ import { scoreSetup } from "./score";
 import { STRATEGY_V1_VERSION_LABEL } from "./config";
 
 export type SignalEvaluation =
-  | { kind: "NO_SIGNAL"; reason: "INCOMPLETE_CANDLE" | "NO_BULLISH_REGIME" | "MISSING_MARKET_DATA" }
+  | { kind: "NO_SIGNAL"; reason: "NO_BULLISH_REGIME" | "MISSING_MARKET_DATA" }
   | {
       kind: "SIGNAL";
       symbol: string;
@@ -22,21 +22,21 @@ export type SignalEvaluation =
  * We only ever score a signal off a fully closed 15-minute candle.
  */
 export function evaluateSignal(symbol: string, candles1h: Candle[], candles15m: Candle[]): SignalEvaluation {
-  if (candles1h.length === 0 || candles15m.length === 0) {
+  const closed1h = candles1h.filter((candle) => candle.isClosed);
+  const closed15m = candles15m.filter((candle) => candle.isClosed);
+
+  if (closed1h.length === 0 || closed15m.length === 0) {
     return { kind: "NO_SIGNAL", reason: "MISSING_MARKET_DATA" };
   }
 
-  const lastCandle15m = candles15m[candles15m.length - 1];
-  if (!lastCandle15m.isClosed) {
-    return { kind: "NO_SIGNAL", reason: "INCOMPLETE_CANDLE" };
-  }
+  const lastCandle15m = closed15m[closed15m.length - 1];
 
-  const regime = evaluateRegime(candles1h);
+  const regime = evaluateRegime(closed1h);
   if (!regime.bullish) {
     return { kind: "NO_SIGNAL", reason: "NO_BULLISH_REGIME" };
   }
 
-  const score = scoreSetup(candles15m);
+  const score = scoreSetup(closed15m);
 
   return {
     kind: "SIGNAL",

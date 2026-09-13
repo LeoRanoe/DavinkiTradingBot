@@ -1,42 +1,13 @@
-# TASKS
+# Tasks
 
-- [x] Phase 1: Repo foundation
-- [x] Phase 2: Supabase schema + RLS + auth
-- [x] Phase 3: Bybit public market client
-- [x] Phase 4: Indicators (16 tests)
-- [x] Phase 5: Strategy V1 (10 tests)
-- [x] Phase 6: Risk engine (17 tests, incl. mandatory min-order test)
-- [x] Phase 7-8: Backtester (6 tests) + backtests UI page
-- [x] Phase 9: Core dashboard UI (all 11 pages + shell + login)
-- [x] Phase 10: Supabase Cron scanner endpoint (`/api/jobs/scan`)
-- [x] Phase 11-12: Knowledge base schema + Qwen client (ingestion pipeline pending)
-- [x] Phase 13: Telegram client + webhook route (untested live - no bot token)
-- [x] Phase 14: Paper trading engine
-- [x] Phase 15: Bybit Demo interface (mocked, no credentials)
-- [x] Phase 16: job_runs/audit_events + System status page
-- [ ] Phase 17: Manual responsive/dark-light QA pass with screenshots
-- [x] Phase 18: Vercel deployment - project created and deployed
-      (`davinki-trading-bot`, linked to this repo, live at
-      https://davinki-trading-bot.vercel.app). `/login` and `/signup`
-      confirmed rendering (HTTP 200). Data-dependent pages still need env
-      vars set - no MCP tool here can set them, so this is on the owner.
-      See docs/MORNING_REPORT.md for the full checklist.
-
-## Immediate next steps (in order)
-1. **Owner: set these in Vercel -> davinki-trading-bot -> Settings ->
-   Environment Variables**, then redeploy:
-   - `NEXT_PUBLIC_SUPABASE_URL` = `https://xvklitfcesprzbnfslks.supabase.co`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` = `sb_publishable_AeiV7QmmHeuaHzp5sKmCtA_GryzQtjW`
-   - `SUPABASE_SECRET_KEY` = (from Supabase Dashboard -> Project Settings -> API -> service_role key)
-   - `QWEN_API_KEY`, `QWEN_BASE_URL`, `QWEN_MODEL` = the values already verified working this session (ask Claude/check local `.env.local`)
-   - `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_USER_ID`, `TELEGRAM_CHAT_ID` = the values already verified working this session
-   - `CRON_SECRET`, `TELEGRAM_WEBHOOK_SECRET` = generated this session (see local `.env.local`, or ask Claude to regenerate)
-2. Configure Supabase Cron (`pg_cron` + `pg_net`) to POST `/api/jobs/scan`
-   every 5 minutes with `CRON_SECRET`, once the site is live.
-3. Register the Telegram webhook (`setWebhook`) against the live URL with
-   `TELEGRAM_WEBHOOK_SECRET`.
-4. Build the knowledge ingestion pipeline (pick an embedding model on the
-   now-working Qwen gateway, populate `knowledge_chunks.embedding`).
-5. Run a real historical backtest (fetch real Bybit history) and persist a
-   `backtests` row so the Backtests page shows real numbers instead of an
-   empty state.
+- [x] Establish `dev` from the historical Claude implementation.
+- [x] Run clean install, lint, typecheck, tests, and production build baseline.
+- [x] Remove public signup and convert the existing account to explicit owner access.
+- [x] Add owner-managed read-only guest credentials with create/reset/delete controls.
+- [x] Enforce owner-only mutations in API routes and Supabase RLS.
+- [x] Fix closed-candle selection and durable scanner no-op behavior.
+- [x] Remove hardcoded Bybit minimum order fallback and verify current V5 spot responses.
+- [x] Verify LIVE remains blocked and the mandatory minimum-order risk conflict test passes.
+- [ ] Deploy `dev` preview and complete authenticated browser verification.
+- [ ] Verify deployed scanner, Cron, Qwen, and Telegram connectivity.
+- [ ] Promote to `staging` only after the preview quality gate passes.

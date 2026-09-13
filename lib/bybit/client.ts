@@ -146,9 +146,17 @@ export async function getInstrumentMetadata(symbol: string): Promise<InstrumentM
     quoteCoin: info.quoteCoin,
     tickSize: Number(info.priceFilter.tickSize),
     qtyStep: Number(info.lotSizeFilter.qtyStep ?? info.lotSizeFilter.basePrecision),
-    minOrderQty: Number(info.lotSizeFilter.minOrderQty),
-    minOrderAmt: Number(info.lotSizeFilter.minOrderAmt ?? "5"),
-    maxOrderQty: info.lotSizeFilter.maxOrderQty ? Number(info.lotSizeFilter.maxOrderQty) : null,
+    // Bybit now marks the spot min/max quantity fields as deprecated. Keep
+    // honoring minOrderQty when the API supplies it, but never invent an
+    // exchange constraint when it is absent. minOrderAmt is the authoritative
+    // current spot minimum and is required by the response schema above.
+    minOrderQty: info.lotSizeFilter.minOrderQty ? Number(info.lotSizeFilter.minOrderQty) : 0,
+    minOrderAmt: Number(info.lotSizeFilter.minOrderAmt),
+    maxOrderQty: info.lotSizeFilter.maxLimitOrderQty
+      ? Number(info.lotSizeFilter.maxLimitOrderQty)
+      : info.lotSizeFilter.maxOrderQty
+        ? Number(info.lotSizeFilter.maxOrderQty)
+        : null,
     priceScale: (info.priceFilter.tickSize.split(".")[1] ?? "").length,
     raw: info,
   };

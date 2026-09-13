@@ -42,11 +42,13 @@ export const bybitInstrumentInfoSchema = z.object({
   lotSizeFilter: z.object({
     basePrecision: z.string(),
     quotePrecision: z.string().optional(),
-    minOrderQty: z.string(),
-    maxOrderQty: z.string(),
-    minOrderAmt: z.string().optional(),
+    minOrderQty: z.string().optional(),
+    maxOrderQty: z.string().optional(),
+    minOrderAmt: z.string(),
     maxOrderAmt: z.string().optional(),
     qtyStep: z.string().optional(),
+    maxLimitOrderQty: z.string().optional(),
+    maxMarketOrderQty: z.string().optional(),
   }),
   priceFilter: z.object({
     tickSize: z.string(),

@@ -20,7 +20,7 @@ export const metadata: Metadata = {
   description: "Autonomous AI-assisted crypto trading coach and research platform.",
 };
 
-export default function RootLayout({ children }: LayoutProps<"/">) {
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
     <html
       lang="en"

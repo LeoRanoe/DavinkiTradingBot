@@ -2,9 +2,13 @@ import { getQwenConfiguration, getTelegramConfiguration, getBybitDemoConfigurati
 import { ConnectionCard } from "@/components/dashboard/connection-card";
 import { TradingModeCard } from "@/components/dashboard/trading-mode-card";
 import { createClient } from "@/lib/supabase/server";
+import { isOwner } from "@/lib/auth/authorization";
+import { redirect } from "next/navigation";
 
 export default async function ConnectionsPage() {
   const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user || !isOwner(user)) redirect("/dashboard");
   const [{ data: settings }, qwen, telegram, demo] = await Promise.all([
     supabase.from("system_settings").select("trading_mode").eq("id", true).single(),
     getQwenConfiguration(),

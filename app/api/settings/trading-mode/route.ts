@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { isOwner } from "@/lib/auth/authorization";
 
 // LIVE is deliberately excluded from the accepted values - this is the
 // UI-facing enforcement layer; the DB CHECK constraint and the risk engine
@@ -20,6 +21,7 @@ export async function POST(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!isOwner(user)) return NextResponse.json({ error: "Owner access required" }, { status: 403 });
 
   const parsed = bodySchema.safeParse(await request.json());
   if (!parsed.success) {
