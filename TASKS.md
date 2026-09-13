@@ -16,8 +16,11 @@
 - [x] Phase 16: job_runs/audit_events + System status page
 - [ ] Phase 17: Manual responsive/dark-light QA pass with screenshots
 - [x] Phase 18: Vercel deployment - project created and deployed
-      (`davinki-trading-bot`, linked to this repo). **Site 500s until env
-      vars are set** - no MCP tool here can set them, so this is on the owner.
+      (`davinki-trading-bot`, linked to this repo, live at
+      https://davinki-trading-bot.vercel.app). `/login` and `/signup`
+      confirmed rendering (HTTP 200). Data-dependent pages still need env
+      vars set - no MCP tool here can set them, so this is on the owner.
+      See docs/MORNING_REPORT.md for the full checklist.
 
 ## Immediate next steps (in order)
 1. **Owner: set these in Vercel -> davinki-trading-bot -> Settings ->
