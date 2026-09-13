@@ -14,6 +14,7 @@ import {
   GraduationCap,
   Activity,
   Settings,
+  ShieldCheck,
   Users,
 } from "lucide-react";
 import {
@@ -88,6 +89,16 @@ export function AppSidebar({ role }: { role: "owner" | "guest" }) {
             >
               <Users />
               <span>Guest access</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              render={<Link href="/settings/risk" />}
+              isActive={pathname.startsWith("/settings/risk")}
+              tooltip="Risk settings"
+            >
+              <ShieldCheck />
+              <span>Risk settings</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>

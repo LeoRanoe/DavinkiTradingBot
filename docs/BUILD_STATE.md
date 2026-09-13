@@ -36,21 +36,35 @@ Last updated: 2026-09-13
 - Qwen and Telegram configuration resolve from server-only environment fallbacks; Qwen's connection test completed.
 - Owner-scoped integration configuration and PAPER write policies are live; a production Qwen configuration save succeeded without the stale admin key.
 
-## Task A — Milestone 1 (owner risk + complete trade candidate)
+## Task A — Milestone 1 (owner risk + complete trade candidate) — COMPLETE
 
-- Deterministic library layer complete and tested: `lib/risk/` gained
-  owner-configurable risk modes (percent-of-equity / fixed-amount),
-  available-capital capping, fee/slippage-aware modeled loss, entry
-  protection (allowed entry zone, expiry, staleness), and deterministic
-  volatility protection. `lib/candidates/` assembles the full "complete
-  candidate" object the spec describes, or a precise typed rejection.
-- All additive: every existing function signature, the mandatory spec #42
-  test, and all 52 previously-passing tests are unchanged and still pass.
-- 84/84 tests passing (52 existing + 32 new); typecheck, lint, and
-  production build all clean.
-- Not yet wired into the production schema, scan job, or UI - see
-  `docs/ORCHESTRATION_STATE.md` for the exact next action and rationale for
-  deferring persistence/wiring to the start of Milestone 2.
+- Deterministic library layer: `lib/risk/` has owner-configurable risk modes
+  (percent-of-equity / fixed-amount), available-capital capping,
+  fee/slippage-aware modeled loss, entry protection (allowed entry zone,
+  expiry, staleness), and deterministic volatility protection.
+  `lib/candidates/` assembles the complete candidate object, or a precise
+  typed rejection.
+- Integrated: an additive migration added owner risk settings to
+  `system_settings` and the candidate snapshot to `signals`; the scanner
+  (`app/api/jobs/scan/route.ts`) now loads owner settings, current account
+  state, live exchange metadata and a **fresh Bybit ticker**, runs the
+  candidate pipeline, and persists either the complete candidate or the
+  typed rejection on one `signals` row. An owner-only risk settings page
+  and API (server-validated, RLS-enforced) drive it.
+- 111/111 tests passing (52 original + 32 library + 27 integration);
+  typecheck, lint, and production build all clean.
+- Verified against live infrastructure: migration applied and existing
+  values preserved; guest UPDATE on settings blocked (0 rows) while owner
+  UPDATE succeeds; `trading_mode='LIVE'`, `live_trading_enabled=true`, and
+  AUTO-without-PAPER/DEMO all refused by the database; the deployed
+  scheduled scan ran SUCCEEDED after the migration with both symbols
+  processed; NOOP behavior intact; instrument metadata refreshing live from
+  Bybit with per-symbol tick/step values.
+- Two honest caveats, detailed in `docs/ORCHESTRATION_STATE.md`: Strategy v1
+  is still `DRAFT` (so production candidates currently resolve to a typed
+  `STRATEGY_NOT_APPROVED` rejection until the owner approves it for PAPER),
+  and this session's application code is on the feature branch, not yet
+  deployed.
 
 ## Remaining hardening
 

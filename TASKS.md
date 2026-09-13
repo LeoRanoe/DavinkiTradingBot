@@ -27,8 +27,17 @@
 - [x] Duplicate candidate prevention, keyed identically to the existing `signals` unique constraint (`lib/risk/duplicate-candidate.ts`).
 - [x] `buildTradeCandidate()` pure pipeline: score -> R/R -> duplicate -> entry protection -> volatility -> risk engine -> complete candidate or typed rejection (`lib/candidates/build-candidate.ts`).
 - [x] 32 new deterministic tests covering the full Milestone 1 checklist; 84/84 passing; typecheck/lint/build all green.
-- [ ] Persist the candidate onto `signals` (new columns) and wire `buildTradeCandidate()` into `app/api/jobs/scan/route.ts`.
-- [ ] Owner-facing risk settings UI (risk mode, pct/fixed amount, limits, min score, min R/R, execution policy).
-- [ ] Mark `MILESTONE_1_COMPLETE = true` once the above is exercised end-to-end through a real scan cycle.
+- [x] Additive Supabase migration for owner risk settings and the candidate snapshot; applied to the live project, repo migrations reconciled with the deployed ledger, types regenerated.
+- [x] Persist the candidate onto `signals` (new columns) and wire `buildTradeCandidate()` into `app/api/jobs/scan/route.ts` behind a fresh Bybit reference price.
+- [x] Owner-facing risk settings UI + owner-only API with server-side validation mirroring the DB CHECK constraints, plus CONSERVATIVE/BALANCED/GROWTH_EXPERIMENT presets.
+- [x] 27 integration tests proving settings → strategy → fresh price → candidate → persisted row, including every typed rejection. 111/111 tests passing.
+- [x] Verified live: guest cannot mutate risk settings, owner can, LIVE refused three ways, deployed Cron scan still SUCCEEDED after the migration.
+- [x] `MILESTONE_1_COMPLETE = true`.
 
-See `docs/ORCHESTRATION_STATE.md` for full detail and the exact next action.
+Open decision for the owner (not a defect): Strategy `v1` is still `DRAFT`,
+so production candidates currently resolve to a typed `STRATEGY_NOT_APPROVED`
+rejection. Approving v1 for PAPER should follow backtest validation — it was
+deliberately not flipped to make candidates flow.
+
+Next: Milestone 2 (Telegram approval + paper position). See
+`docs/ORCHESTRATION_STATE.md` for full detail and the exact next action.

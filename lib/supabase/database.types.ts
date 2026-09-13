@@ -655,15 +655,27 @@ export type Database = {
           entry_price: number | null
           expires_at: string | null
           id: string
+          indicator_snapshot: Json | null
+          maximum_allowed_entry: number | null
+          minimum_allowed_entry: number | null
+          planned_entry: number | null
           reason: string | null
+          reference_price: number | null
+          reference_price_at: string | null
           regime: string
+          rejection_detail: string | null
+          rejection_reason: string | null
           risk_reward: number | null
+          risk_snapshot: Json | null
           score: number
+          stop_pct: number | null
           stop_price: number | null
           strategy_version_id: string
           symbol: string
           target_price: number | null
           timeframe: string
+          trading_mode: Database["public"]["Enums"]["trading_mode"] | null
+          volatility_state: string | null
         }
         Insert: {
           ai_explanation?: Json | null
@@ -675,15 +687,27 @@ export type Database = {
           entry_price?: number | null
           expires_at?: string | null
           id?: string
+          indicator_snapshot?: Json | null
+          maximum_allowed_entry?: number | null
+          minimum_allowed_entry?: number | null
+          planned_entry?: number | null
           reason?: string | null
+          reference_price?: number | null
+          reference_price_at?: string | null
           regime: string
+          rejection_detail?: string | null
+          rejection_reason?: string | null
           risk_reward?: number | null
+          risk_snapshot?: Json | null
           score: number
+          stop_pct?: number | null
           stop_price?: number | null
           strategy_version_id: string
           symbol: string
           target_price?: number | null
           timeframe: string
+          trading_mode?: Database["public"]["Enums"]["trading_mode"] | null
+          volatility_state?: string | null
         }
         Update: {
           ai_explanation?: Json | null
@@ -695,15 +719,27 @@ export type Database = {
           entry_price?: number | null
           expires_at?: string | null
           id?: string
+          indicator_snapshot?: Json | null
+          maximum_allowed_entry?: number | null
+          minimum_allowed_entry?: number | null
+          planned_entry?: number | null
           reason?: string | null
+          reference_price?: number | null
+          reference_price_at?: string | null
           regime?: string
+          rejection_detail?: string | null
+          rejection_reason?: string | null
           risk_reward?: number | null
+          risk_snapshot?: Json | null
           score?: number
+          stop_pct?: number | null
           stop_price?: number | null
           strategy_version_id?: string
           symbol?: string
           target_price?: number | null
           timeframe?: string
+          trading_mode?: Database["public"]["Enums"]["trading_mode"] | null
+          volatility_state?: string | null
         }
         Relationships: [
           {
@@ -782,37 +818,70 @@ export type Database = {
       }
       system_settings: {
         Row: {
+          candidate_expiry_minutes: number
+          execution_policy: string
+          fee_bps: number
+          fixed_risk_amount: number
           id: boolean
           live_trading_enabled: boolean
+          max_atr_pct: number
+          max_entry_drift_pct: number
           max_losing_trades_per_day: number
+          max_market_data_age_seconds: number
           max_new_trades_per_day: number
           max_open_positions: number
           max_risk_per_trade_pct: number
+          min_candidate_score: number
+          min_risk_reward: number
+          risk_mode: string
           signal_expiry_minutes: number
+          slippage_bps: number
           trading_mode: Database["public"]["Enums"]["trading_mode"]
           updated_at: string
           updated_by: string | null
         }
         Insert: {
+          candidate_expiry_minutes?: number
+          execution_policy?: string
+          fee_bps?: number
+          fixed_risk_amount?: number
           id?: boolean
           live_trading_enabled?: boolean
+          max_atr_pct?: number
+          max_entry_drift_pct?: number
           max_losing_trades_per_day?: number
+          max_market_data_age_seconds?: number
           max_new_trades_per_day?: number
           max_open_positions?: number
           max_risk_per_trade_pct?: number
+          min_candidate_score?: number
+          min_risk_reward?: number
+          risk_mode?: string
           signal_expiry_minutes?: number
+          slippage_bps?: number
           trading_mode?: Database["public"]["Enums"]["trading_mode"]
           updated_at?: string
           updated_by?: string | null
         }
         Update: {
+          candidate_expiry_minutes?: number
+          execution_policy?: string
+          fee_bps?: number
+          fixed_risk_amount?: number
           id?: boolean
           live_trading_enabled?: boolean
+          max_atr_pct?: number
+          max_entry_drift_pct?: number
           max_losing_trades_per_day?: number
+          max_market_data_age_seconds?: number
           max_new_trades_per_day?: number
           max_open_positions?: number
           max_risk_per_trade_pct?: number
+          min_candidate_score?: number
+          min_risk_reward?: number
+          risk_mode?: string
           signal_expiry_minutes?: number
+          slippage_bps?: number
           trading_mode?: Database["public"]["Enums"]["trading_mode"]
           updated_at?: string
           updated_by?: string | null

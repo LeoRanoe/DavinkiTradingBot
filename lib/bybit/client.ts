@@ -183,6 +183,7 @@ export async function getTicker(symbol: string): Promise<Ticker> {
     highPrice24h: Number(t.highPrice24h),
     lowPrice24h: Number(t.lowPrice24h),
     volume24h: Number(t.volume24h),
+    serverTimeMs: parsed.data.time,
   };
 }
 

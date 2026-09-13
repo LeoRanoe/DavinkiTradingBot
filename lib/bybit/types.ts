@@ -30,6 +30,12 @@ export type Ticker = {
   highPrice24h: number;
   lowPrice24h: number;
   volume24h: number;
+  /**
+   * Exchange server time (ms epoch) from the response envelope. Used as the
+   * market-data freshness stamp so a candidate can never be priced off a
+   * stale quote - see lib/risk/entry-protection.ts.
+   */
+  serverTimeMs: number;
 };
 
 /** Maps our internal timeframe names to Bybit's kline "interval" values. */

@@ -1,11 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { getCandles, getInstrumentMetadata } from "@/lib/bybit/client";
+import { getCandles, getInstrumentMetadata, getTicker } from "@/lib/bybit/client";
 import { createAdminClient, createBearerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import { evaluateSignal } from "@/lib/strategy/v1/signal";
 import { STRATEGY_V1_PARAMS, STRATEGY_V1_VERSION_LABEL } from "@/lib/strategy/v1/config";
 import { checkAndCloseOpenTrades } from "@/lib/trading/monitor";
+import { computeAccountState } from "@/lib/trading/account-state";
+import { buildCandidateForScan } from "@/lib/candidates/from-settings";
+import { buildSignalRow } from "@/lib/candidates/persistence";
+import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
+import type { InstrumentRules } from "@/lib/risk/types";
 import { sendTelegramMessage, formatCandidateMessage } from "@/lib/telegram/client";
 
 export const dynamic = "force-dynamic";
@@ -66,7 +71,7 @@ export async function POST(request: NextRequest) {
 
   const { data: strategyVersion, error: strategyError } = await admin
     .from("strategy_versions")
-    .select("id")
+    .select("id, status")
     .eq("version_label", STRATEGY_V1_VERSION_LABEL)
     .single();
 
@@ -84,11 +89,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { data: settings } = await admin.from("system_settings").select("signal_expiry_minutes").eq("id", true).single();
-  const expiryMinutes = settings?.signal_expiry_minutes ?? 30;
+  // The owner's stored risk configuration drives every candidate this run
+  // produces. Read once per scan so all symbols in one cycle are evaluated
+  // against exactly the same settings.
+  const { data: settingsRow } = await admin.from("system_settings").select("*").eq("id", true).single();
+  const settings = riskSettingsFromRow(settingsRow);
+
+  // Only a strategy version explicitly approved for the active mode may
+  // produce an actionable candidate. A DRAFT version still gets a complete,
+  // deterministic evaluation - it is recorded as a typed
+  // STRATEGY_NOT_APPROVED rejection rather than silently skipped.
+  const strategyApproved =
+    strategyVersion.status === "PAPER_APPROVED" || strategyVersion.status === "DEMO_APPROVED";
 
   let recordsProcessed = 0;
   let signalsFound = 0;
+  let candidatesBuilt = 0;
+  let candidatesRejected = 0;
   let tradesClosed = 0;
   const errors: string[] = [];
 
@@ -117,8 +134,16 @@ export async function POST(request: NextRequest) {
         .maybeSingle();
 
       // Best-effort instrument metadata refresh (dynamic, never hard-coded).
+      let instrumentRules: InstrumentRules | null = null;
       try {
         const meta = await getInstrumentMetadata(symbol);
+        instrumentRules = {
+          tickSize: meta.tickSize,
+          qtyStep: meta.qtyStep,
+          minOrderQty: meta.minOrderQty,
+          minOrderAmt: meta.minOrderAmt,
+          maxOrderQty: meta.maxOrderQty,
+        };
         await admin.from("instrument_metadata").upsert(
           {
             symbol: meta.symbol,
@@ -167,26 +192,106 @@ export async function POST(request: NextRequest) {
       if (evaluation.kind !== "SIGNAL") continue;
       if (evaluation.score.classification === "IGNORE") continue; // don't clutter the DB with noise
 
-      const candleTimeIso = new Date(evaluation.candleTime).toISOString();
       const isCandidate = evaluation.score.classification === "CANDIDATE";
+      const nowMs = Date.now();
+      // Generated up front so candidateId === signalId === the persisted row.
+      const signalId = crypto.randomUUID();
+
+      // A CANDIDATE classification is a STRATEGY opinion, not a financial
+      // decision. Everything below re-derives the trade from current market
+      // data and the owner's risk settings; the deterministic risk/candidate
+      // layer has final eligibility authority. No AI is consulted here.
+      let candidateResult = undefined;
+      let referencePrice: number | undefined;
+      let referencePriceAtMs: number | undefined;
+
+      if (isCandidate) {
+        // Never price a candidate off the (already closed, already stale)
+        // signal candle - fetch the current market price and stamp it.
+        const ticker = await getTicker(symbol);
+        referencePrice = ticker.lastPrice;
+        referencePriceAtMs = ticker.serverTimeMs;
+
+        const rules =
+          instrumentRules ??
+          (await (async (): Promise<InstrumentRules | null> => {
+            const { data: stored } = await admin
+              .from("instrument_metadata")
+              .select("tick_size, qty_step, min_order_qty, min_order_amt, max_order_qty")
+              .eq("symbol", symbol)
+              .maybeSingle();
+            return stored
+              ? {
+                  tickSize: stored.tick_size,
+                  qtyStep: stored.qty_step,
+                  minOrderQty: stored.min_order_qty,
+                  minOrderAmt: stored.min_order_amt,
+                  maxOrderQty: stored.max_order_qty,
+                }
+              : null;
+          })());
+
+        if (!rules) {
+          // Fail closed: without live exchange rules there is no honest way
+          // to size or validate an order. Never fall back to a guess.
+          candidateResult = {
+            kind: "REJECTED" as const,
+            rejection: {
+              signalId,
+              symbol,
+              strategyVersionId: strategyVersion.id,
+              strategyVersionLabel: STRATEGY_V1_VERSION_LABEL,
+              timeframe: STRATEGY_V1_PARAMS.entryTimeframe,
+              closedCandleTime: new Date(evaluation.candleTime).toISOString(),
+              reason: "INVALID_EXCHANGE_METADATA" as const,
+              detail: `No exchange metadata available for ${symbol}; refusing to size a position without live instrument rules.`,
+            },
+          };
+        } else {
+          const account = await computeAccountState(admin, settings.tradingMode, INITIAL_PAPER_EQUITY);
+          candidateResult = buildCandidateForScan({
+            signalId,
+            symbol,
+            strategyVersionId: strategyVersion.id,
+            strategyVersionLabel: STRATEGY_V1_VERSION_LABEL,
+            timeframe: STRATEGY_V1_PARAMS.entryTimeframe,
+            closedCandleTimeMs: evaluation.candleTime,
+            regime: evaluation.regime,
+            score: evaluation.score,
+            referencePrice,
+            marketDataTimestampMs: referencePriceAtMs,
+            nowMs,
+            account,
+            instrument: rules,
+            settings,
+            strategyApproved,
+          });
+        }
+
+        if (candidateResult.kind === "CANDIDATE") candidatesBuilt += 1;
+        else candidatesRejected += 1;
+      }
 
       const { data: insertedSignal, error: signalError } = await admin
         .from("signals")
         .insert({
-          strategy_version_id: strategyVersion.id,
-          symbol,
-          timeframe: STRATEGY_V1_PARAMS.entryTimeframe,
-          candle_time: candleTimeIso,
-          regime: evaluation.regime,
-          score: evaluation.score.total,
-          classification: evaluation.score.classification,
-          entry_price: evaluation.score.entryPrice,
-          stop_price: evaluation.score.stopPrice,
-          target_price: evaluation.score.targetPrice,
-          risk_reward: evaluation.score.riskReward,
-          reason: describeReason(evaluation.score.components),
-          approval_status: isCandidate ? "PENDING" : "NOT_APPLICABLE",
-          expires_at: isCandidate ? new Date(Date.now() + expiryMinutes * 60_000).toISOString() : null,
+          id: signalId,
+          ...buildSignalRow({
+            strategyVersionId: strategyVersion.id,
+            symbol,
+            timeframe: STRATEGY_V1_PARAMS.entryTimeframe,
+            candleTimeMs: evaluation.candleTime,
+            regime: evaluation.regime,
+            score: evaluation.score,
+            tradingMode: settings.tradingMode,
+            reason: describeReason(evaluation.score.components),
+            result: candidateResult,
+            referencePrice,
+            referencePriceAtMs,
+            signalExpiryMinutes: settings.signalExpiryMinutes,
+            candidateExpiryMinutes: settings.candidateExpiryMinutes,
+            nowMs,
+          }),
         })
         .select("id")
         .single();
@@ -215,15 +320,19 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      if (isCandidate && insertedSignal) {
-        // Best-effort notification - never blocks the scan on failure.
+      // Notify only about a candidate the deterministic layer actually
+      // approved - a strategy-level CANDIDATE that failed risk validation is
+      // recorded with its typed reason, never announced as tradeable.
+      // (The interactive APPROVE/REJECT flow is Milestone 2.)
+      if (insertedSignal && candidateResult?.kind === "CANDIDATE") {
+        const { candidate } = candidateResult;
         await sendTelegramMessage(
           formatCandidateMessage({
             symbol,
             score: evaluation.score.total,
             regime: evaluation.regime,
-            riskAmount: 0,
-            riskReward: evaluation.score.riskReward,
+            riskAmount: candidate.risk.modeledMaxLoss,
+            riskReward: candidate.position.riskReward,
             reason: describeReason(evaluation.score.components),
           }),
         ).catch(() => undefined);
@@ -240,10 +349,20 @@ export async function POST(request: NextRequest) {
       : "SUCCEEDED";
   await finishJob(admin, jobRun?.id, status, recordsProcessed, errors.join("; ") || null, {
     signalsFound,
+    candidatesBuilt,
+    candidatesRejected,
     tradesClosed,
   });
 
-  return NextResponse.json({ status, recordsProcessed, signalsFound, tradesClosed, errors });
+  return NextResponse.json({
+    status,
+    recordsProcessed,
+    signalsFound,
+    candidatesBuilt,
+    candidatesRejected,
+    tradesClosed,
+    errors,
+  });
 }
 
 function describeReason(components: { name: string; pointsEarned: number; pointsPossible: number }[]): string {
