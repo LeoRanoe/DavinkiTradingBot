@@ -11,5 +11,6 @@
 - [x] Deploy the repaired release and complete owner/guest browser verification.
 - [x] Verify the deployed scanner/Edge path, idempotency, and Qwen configuration.
 - [x] Promote the verified repair to `staging` and `main` while preserving the Claude branch.
-- [ ] Replace the stale Vercel Supabase admin key, then retest Vault saves, Telegram callbacks, and privileged paper writes.
+- [x] Remove the stale Supabase admin-key dependency from owner Vault saves and dashboard PAPER writes.
+- [ ] Replace/remove the stale Vercel admin key and retest Telegram callback execution plus the manual Cron fallback.
 - [ ] Send a fresh Telegram test message and observe a complete production paper trade when a real candidate occurs.

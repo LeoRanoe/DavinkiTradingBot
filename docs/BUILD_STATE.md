@@ -34,10 +34,11 @@ Last updated: 2026-09-13
 - Owner guest lifecycle: create, initial login, password reset, second login, and delete all succeeded.
 - Supabase Cron uses an authenticated Edge proxy and dedicated scanner identity. It persisted current BTCUSDT/ETHUSDT data, produced an idempotent `NOOP`, and recovered from one missed tick with a successful 16:30 UTC run.
 - Qwen and Telegram configuration resolve from server-only environment fallbacks; Qwen's connection test completed.
+- Owner-scoped integration configuration and PAPER write policies are live; a production Qwen configuration save succeeded without the stale admin key.
 
 ## Remaining hardening
 
-- Replace the stale Vercel `SUPABASE_SECRET_KEY` with a key belonging to `xvklitfcesprzbnfslks`; current connected Supabase management access cannot reveal/rotate that key. This affects dashboard Vault writes and service-role-only webhook/paper mutations, not login, guest management, reads, or scheduled scans.
+- Replace or remove the stale Vercel `SUPABASE_SECRET_KEY`. Owner Vault saves, dashboard PAPER writes, guest management, and scans no longer depend on it; the remaining dependency is Telegram callback execution and the manual Cron fallback.
 - Send a fresh Telegram test message and verify the webhook callback after that key is repaired.
 - Exercise one naturally occurring production paper candidate through entry and exit; the deterministic path is currently test-verified only.
 - Supabase leaked-password protection is still disabled at the project level.

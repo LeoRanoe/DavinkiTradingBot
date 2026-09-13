@@ -14,6 +14,9 @@ Authenticated owners may mutate the supported dashboard state; guests are
 read-only. The internal scanner JWT has only the insert/update policies needed
 for scan persistence. Public Auth user creation is rejected by a database
 trigger unless a server-controlled owner, guest, or scanner role is present.
+The security advisor warns that six authenticated owner-management RPCs are
+`SECURITY DEFINER`; this is intentional, and each function independently
+rejects callers whose signed `app_metadata.role` is not `owner`.
 
 ## Secrets
 - Never logged, never committed (`.env*` gitignored), never returned to the
@@ -27,8 +30,10 @@ trigger unless a server-controlled owner, guest, or scanner role is present.
   `lib/supabase/server.ts` `createAdminClient()`, imported exclusively from
   server-only files (cron/webhook route handlers). Never imported from
   anything under `components/` or any `"use client"` file.
-- Production's current value is stale. Scheduled scans deliberately avoid it
-  by exchanging a Vault-held scanner credential for a short-lived scoped JWT.
+- Production's current value is stale. Owner Vault saves and dashboard PAPER
+  writes use role-checked database operations; scheduled scans exchange a
+  Vault-held scanner credential for a short-lived scoped JWT. Only Telegram
+  callback execution and the manual Cron fallback still use the admin client.
 
 ## Webhooks / cron (Phase 10, 13)
 - `/api/jobs/scan` accepts the dedicated scanner JWT. `CRON_SECRET` is retained
