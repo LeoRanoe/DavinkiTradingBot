@@ -16,9 +16,15 @@
    server-side writes (cron, webhooks).
 8. **AI coach** (`lib/qwen/`) - explanations/lessons/reviews only, structured
    output validated by Zod, degrades to "unavailable" without crashing anything.
-9. **Notifications** (`lib/telegram/`) - webhook + outbound messages; approvals
+9. **News intelligence** (`lib/news/`) - provider-agnostic ingestion
+   (`NewsProvider` -> normalize -> deduplicate -> deterministic classify ->
+   optional AI analysis -> stored event -> candidate context). Strictly
+   one-directional: news reads nothing from trading, and trading reads
+   nothing from news except a display-only snapshot. `lib/ai/usage.ts`
+   accounts for every AI request in tokens.
+10. **Notifications** (`lib/telegram/`) - webhook + outbound messages; approvals
    re-run the full risk engine, they are never execution authority by themselves.
-10. **UI** (`app/`, `components/`) - Next.js App Router, Server Components by
+11. **UI** (`app/`, `components/`) - Next.js App Router, Server Components by
     default, shadcn/ui + TanStack Table + Recharts + lightweight-charts.
 
 ## Data flow (scan cycle)
@@ -28,6 +34,15 @@ Supabase Cron -> authenticated Edge proxy -> short-lived scanner JWT ->
 (idempotent on strategy_version_id+symbol+timeframe+candle_time) -> optionally
 call Qwen for an explanation -> optionally notify Telegram -> job_runs row
 records outcome either way (including NOOP when no new closed candle).
+
+## News data flow (separate job, slower cadence)
+Supabase Cron -> `davinki-news-proxy` Edge function -> scanner JWT ->
+`POST /api/jobs/news` -> per provider (isolated): fetch RSS/Atom ->
+normalize -> deduplicate against recent events -> deterministic
+classification (assets, category, base risk) -> AI analysis ONLY for
+relevant, materially-capable events -> `news_events`. The scan job later
+attaches a read-only snapshot of the most relevant recent events to a
+candidate, and that snapshot is immutable thereafter.
 
 ## Trading mode state machine
 OBSERVE -> PAPER -> DEMO -> (LIVE, permanently unreachable in this build).

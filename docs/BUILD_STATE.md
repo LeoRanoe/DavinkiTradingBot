@@ -91,6 +91,40 @@ Last updated: 2026-09-13
 - Not yet deployed: the Milestone 1 and 2 application code is on the feature
   branch only.
 
+## Task A — Milestone 3 (News Intelligence + Qwen context) — COMPLETE
+
+- A separate News Intelligence module ingests public publisher RSS/Atom
+  feeds (SEC, Federal Reserve, CoinDesk, Cointelegraph), normalizes and
+  deduplicates them, classifies asset relevance / category / base news risk
+  deterministically, and only then spends an AI call - on a relevant,
+  materially-capable event, once per event, with a per-run cap. A routine
+  ingestion run makes zero AI calls.
+- News is CONTEXT, never an engine. `lib/news/isolation.test.ts` asserts
+  structurally that the risk, strategy, backtest and indicator layers - and
+  the candidate builder that decides eligibility - never import the news or
+  Qwen modules, and a separate test proves a candidate is financially
+  identical under LOW, HIGH or UNKNOWN news risk.
+- Every Qwen failure mode degrades cleanly (non-JSON, schema violation,
+  401, 429, timeout, missing credential): the deterministic classification
+  stands alone and the trading pipeline is untouched.
+- AI usage is accounted in requests and tokens, with no invented dollar cost.
+- The candidate carries an IMMUTABLE news snapshot, so an old trade always
+  shows what was known then.
+- 254/254 tests passing (185 + 69 new); typecheck, lint and production build
+  clean.
+- Verified live: the migration is applied, RLS is correct on all four new
+  tables (scanner writes, guest reads but cannot write), the `event_hash`
+  unique constraint enforces deduplication at the database level, invalid
+  risk values and oversized excerpts are refused, and Supabase security
+  advisors report no new findings.
+- NOT verified from the development session: a live news-feed fetch and a
+  real Qwen request. The sandbox blocks all outbound network access (even
+  `api.bybit.com`), so both are covered by realistic fixtures and mocked
+  HTTP instead, and become verifiable on deployment.
+- The news cron is deliberately NOT scheduled yet - the Edge function is
+  written and ready, but scheduling it against the current production build
+  would log a failed job every 15 minutes. See `docs/OPERATIONS.md`.
+
 ## Remaining hardening
 
 - Replace or remove the stale Vercel `SUPABASE_SECRET_KEY`. Owner Vault saves, dashboard PAPER writes, guest management, and scans no longer depend on it; the remaining dependency is Telegram callback execution and the manual Cron fallback. Milestone 2 narrowed that path to a small set of specific operations and made a missing/rotated key surface as a clear "server configuration error" acknowledgement with nothing executed, instead of a 500 that Telegram would retry indefinitely. Replacing the key with a narrowly-scoped capability (an inbound webhook has no user session to carry RLS) is still open.

@@ -13,6 +13,7 @@ import {
   BookOpen,
   GraduationCap,
   Activity,
+  Newspaper,
   Settings,
   ShieldCheck,
   Users,
@@ -39,6 +40,7 @@ const NAV_ITEMS = [
   { title: "Backtests", url: "/backtests", icon: FlaskConical },
   { title: "Strategies", url: "/strategies", icon: GitBranch },
   { title: "Knowledge", url: "/knowledge", icon: BookOpen },
+  { title: "News", url: "/news", icon: Newspaper },
   { title: "Learn", url: "/learn", icon: GraduationCap },
   { title: "System", url: "/system", icon: Activity },
 ];

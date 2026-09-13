@@ -1,6 +1,7 @@
 import { getTelegramConfiguration } from "@/lib/config/integrations";
 import type { TradeCandidate } from "@/lib/candidates/types";
 import type { ClosedPosition } from "@/lib/trading/position-manager";
+import type { CandidateNewsContext } from "@/lib/news/types";
 
 export type TelegramResult = { ok: true } | { ok: false; reason: "NOT_CONFIGURED" | "ERROR"; message?: string };
 
@@ -75,13 +76,15 @@ function price(value: number): string {
 /**
  * The actionable candidate recommendation. Every number here comes from the
  * persisted, deterministically-calculated candidate - nothing is estimated
- * or placeholder. News is deliberately ABSENT rather than faked: the News
- * milestone has not shipped.
+ * or placeholder. The news section is omitted entirely when no news context
+ * was produced, and never padded with invented analysis.
  */
 export function formatCandidateMessage(input: {
   candidate: TradeCandidate;
   riskModeLabel: string;
   validForMinutes: number;
+  /** Milestone 3 context. Omitted entirely when the news layer never ran. */
+  news?: CandidateNewsContext;
 }): string {
   const { candidate: c } = input;
   const rr = c.position.riskReward;
@@ -114,11 +117,57 @@ export function formatCandidateMessage(input: {
     `1H regime      ${c.marketRegime}`,
     `Volatility     ${c.volatilityState}`,
     `Strategy       ${c.strategyVersionLabel}`,
+    ...newsSection(input.news),
     "",
     `Valid for      ${input.validForMinutes} minutes`,
     "",
     "Approving re-checks everything against fresh market data before anything opens.",
   ].join("\n");
+}
+
+function relativeAge(fromIso: string, toIso: string): string {
+  const minutes = Math.round((Date.parse(toIso) - Date.parse(fromIso)) / 60_000);
+  if (!Number.isFinite(minutes) || minutes < 1) return "just now";
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.round(minutes / 60);
+  return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+}
+
+/**
+ * Concise news context. Kept short on purpose - Telegram is an approval
+ * surface, not a newsfeed - and never padded with placeholder analysis.
+ * News is context: it does not gate approval and does not alter any number
+ * above it.
+ */
+function newsSection(news: CandidateNewsContext | undefined): string[] {
+  if (!news) return [];
+
+  const lines = ["", "- - - NEWS - - -", "", `Risk           ${news.newsRisk}`];
+
+  if (news.status === "UNAVAILABLE") {
+    lines.push(
+      "",
+      "News analysis temporarily unavailable.",
+      "Technical and risk checks are independent and unaffected.",
+    );
+    return lines;
+  }
+
+  if (news.status === "NO_RELEVANT_EVENTS") {
+    lines.push("", "No major relevant recent events found.");
+    return lines;
+  }
+
+  if (news.headline) lines.push("", `Context        ${news.headline}`);
+
+  for (const event of news.events.slice(0, 2)) {
+    lines.push(`  - ${event.headline} (${event.source})`);
+  }
+
+  const newest = news.events[0];
+  if (newest) lines.push("", `Updated        ${relativeAge(newest.publishedAt, news.generatedAt)}`);
+
+  return lines;
 }
 
 /** APPROVE / REJECT callback buttons plus a VIEW deep link into the app. */

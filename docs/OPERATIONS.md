@@ -22,6 +22,70 @@ An open position is therefore monitored on the job's cadence even during a
 long stretch with no new setup, and a `NOOP` still means "no new strategy
 work", not "nothing happened".
 
+## News ingestion job (`POST /api/jobs/news`)
+
+Deliberately SEPARATE from the market scanner. The strategy path never waits
+on a news fetch, news runs on its own slower cadence, and a total news
+outage leaves trading completely unaffected.
+
+Flow: fetch each provider (isolated) -> normalize -> deduplicate ->
+deterministic classify -> AI analysis only where it earns its cost ->
+persist. Repeated runs are idempotent: deduplication collapses anything
+already stored, so re-running costs nothing and creates nothing.
+
+Auth mirrors the scan job exactly: the Vault-held scanner credential
+exchanged for a short-lived JWT by an Edge proxy, with `CRON_SECRET` as a
+manual fallback.
+
+### Activating the schedule (not yet done)
+
+`supabase/functions/davinki-news-proxy/index.ts` is ready but is NOT
+deployed or scheduled. Activating it before the application code that serves
+`/api/jobs/news` is deployed would simply log a failed job every 15 minutes.
+After this branch is deployed:
+
+1. Deploy the Edge function `davinki-news-proxy`.
+2. Add the cron entry (15 minutes is ample - news does not arrive on a
+   candle boundary):
+
+```sql
+select cron.schedule('davinki_news_15m', '*/15 * * * *', $$
+ select net.http_post(
+  url:='https://<project>.supabase.co/functions/v1/davinki-news-proxy',
+  headers:=jsonb_build_object(
+   'Content-Type','application/json',
+   'apikey',(select decrypted_secret from vault.decrypted_secrets where name='davinki_cron_invoker_jwt' limit 1),
+   'Authorization','Bearer '||(select decrypted_secret from vault.decrypted_secrets where name='davinki_cron_invoker_jwt' limit 1)
+  ),
+  body:='{}'::jsonb,
+  timeout_milliseconds:=60000
+ );
+$$);
+```
+
+3. Confirm on `/system` that "News ingestion" reports a real run.
+
+## News is context, never an engine
+
+The one invariant that matters here: **no file under `lib/risk/`,
+`lib/strategy/` or the sizing path imports anything under `lib/news/`.**
+News cannot create a trade, change position size, move a stop or target,
+bypass a risk rejection, or authorise execution. A candidate is financially
+identical whether news risk is LOW, HIGH, or UNKNOWN - there is a test
+asserting exactly that.
+
+Three distinct news states, which must not be conflated:
+
+| State | Meaning |
+|---|---|
+| `LOW` + NO_RELEVANT_EVENTS | We looked and found nothing material |
+| `LOW`/`MEDIUM`/`HIGH` + OK | We looked and found something |
+| `UNKNOWN` + UNAVAILABLE | We could not look at all |
+
+AI failure of any kind (missing credential, auth, rate limit, timeout,
+malformed output) degrades to UNKNOWN or leaves the deterministic
+classification standing alone. It never blocks a candidate.
+
 ## Candidate lifecycle
 
 One state machine, on `signals.approval_status`. `rejection_reason` and

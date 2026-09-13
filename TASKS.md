@@ -55,5 +55,23 @@ Open for the owner: Strategy `v1` remains `DRAFT` on purpose. See
 `docs/STRATEGY_V1_PAPER_READINESS.md` — the honest recommendation is NOT YET,
 because zero backtests have ever been run.
 
-Next: Milestone 3 (News + Qwen). See `docs/ORCHESTRATION_STATE.md` for the
-exact next action.
+## Task A — Milestone 3: News Intelligence + Qwen context
+
+- [x] Additive migration: `news_events`, `news_event_sources`, `candidate_news_links`, `ai_usage_events`, plus `signals.news_risk` / `signals.news_snapshot`. Applied and verified live, with RLS on all four tables and no new security-advisor findings.
+- [x] Provider abstraction (`NewsProvider`) with a dependency-free RSS/Atom parser and four public publisher feeds (SEC + Federal Reserve as OFFICIAL, CoinDesk + Cointelegraph as media). No scraping, no paid credential, polite identifying User-Agent.
+- [x] Deterministic normalization, deduplication (canonical URL → normalized headline → token similarity, with the match reason persisted), asset relevance, category and BASE news risk — all before any AI is consulted.
+- [x] Structured Qwen analysis validated by Zod; every failure mode (non-JSON, schema violation, 401, 429, timeout, missing credential) degrades cleanly and never blocks trading.
+- [x] AI called only for relevant, materially-capable events, once per event, with a per-run cap. A routine ingestion run makes zero calls.
+- [x] AI usage accounting in requests and tokens — deliberately no invented dollar cost.
+- [x] Immutable news snapshot on the candidate; `/news` page, `/system` diagnostics and candidate detail all surface it read-only.
+- [x] Structural guarantee that news never reaches sizing, stops, targets or eligibility (`lib/news/isolation.test.ts`), plus a test asserting a candidate is identical under LOW/HIGH/UNKNOWN news risk.
+- [x] 69 new tests including the end-to-end proof; 254/254 passing, typecheck/lint/build clean.
+- [x] `MILESTONE_3_COMPLETE = true`, `INTELLIGENCE_LAYER_READY = true`.
+
+Not verified from the development session (sandbox blocks all outbound
+network access): a live news-feed fetch and a real Qwen request. Both are
+covered by tests against realistic fixtures and mocked HTTP, and both become
+verifiable once the branch is deployed.
+
+Next: Milestone 4 (Controlled learning). See `docs/ORCHESTRATION_STATE.md`
+for the exact next action.

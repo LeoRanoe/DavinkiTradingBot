@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import type { CandidateRisk, IndicatorSnapshot } from "@/lib/candidates/types";
+import type { CandidateNewsContext } from "@/lib/news/types";
 
 export const dynamic = "force-dynamic";
 
@@ -65,6 +66,7 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
     .maybeSingle();
 
   const risk = (signal.risk_snapshot ?? null) as CandidateRisk | null;
+  const news = (signal.news_snapshot ?? null) as CandidateNewsContext | null;
   const indicators = (signal.indicator_snapshot ?? null) as IndicatorSnapshot | null;
 
   const nowMs = await currentTimeMs();
@@ -195,6 +197,43 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
               />
               <Row label="Relative volume" value={num(indicators.relativeVolume, 2)} />
             </div>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {news ? (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">News context at decision time</CardTitle>
+            <CardDescription>
+              Exactly what was known when this candidate was created - not today&apos;s news. Context only: it never
+              affected the risk, sizing, stop or target above.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Row label="News risk" value={news.newsRisk} />
+            <Row label="Status" value={news.status} />
+            <Row label="Captured" value={news.generatedAt} />
+            {news.events.length > 0 ? (
+              <div className="mt-3 space-y-3">
+                {news.events.map((event) => (
+                  <div key={event.id} className="border-t pt-3 text-sm">
+                    <div className="font-medium">{event.headline}</div>
+                    <div className="text-muted-foreground text-xs">
+                      {event.source} · {event.sourceQuality} · {event.category} · {event.newsRisk} ·{" "}
+                      {new Date(event.publishedAt).toLocaleString()}
+                    </div>
+                    {event.summary ? <p className="text-muted-foreground mt-1 text-xs">{event.summary}</p> : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground mt-2 text-sm">
+                {news.status === "UNAVAILABLE"
+                  ? "The news layer could not be consulted when this candidate was created."
+                  : "No relevant recent events were found."}
+              </p>
+            )}
           </CardContent>
         </Card>
       ) : null}

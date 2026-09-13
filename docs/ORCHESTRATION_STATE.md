@@ -6,7 +6,9 @@ after every milestone.
 
 ## MILESTONE_1_COMPLETE = true
 ## MILESTONE_2_COMPLETE = true
+## MILESTONE_3_COMPLETE = true
 ## AUTOMATED_TRADING_CORE_READY = true
+## INTELLIGENCE_LAYER_READY = true
 
 Owner risk configuration, the complete trade-candidate pipeline, Telegram
 approval, PAPER execution and automatic position management are implemented,
@@ -15,17 +17,46 @@ is operational in PAPER + APPROVAL_REQUIRED, subject to the one owner
 decision recorded under "Caveat A" (Strategy v1 is still DRAFT by design).
 
 ## CURRENT_MILESTONE
-None in progress. Milestone 3 (News + Qwen) is next and has NOT been started.
+None in progress. Milestone 4 (Controlled learning) is next and has NOT been
+started.
 
 ## LAST_COMPLETED_MILESTONE
-Milestone 2 — Telegram approval + PAPER position lifecycle.
+Milestone 3 — News Intelligence + Qwen context.
 
 ## CURRENT_BRANCH
 `claude/davinki-milestone-1-ekbi1k`
 
 ## LAST_GOOD_COMMIT
-The commit on this branch prefixed `feat(milestone-2):`. Milestone 1 is
-carried by the preceding `feat(risk):` and `feat(milestone-1):` commits.
+The commit on this branch prefixed `feat(milestone-3):`. Earlier milestones
+are carried by `feat(risk):`, `feat(milestone-1):` and `feat(milestone-2):`.
+
+## VERIFIED_BASELINE (after Milestone 3)
+
+- Local: typecheck clean, lint clean (the same 2 pre-existing warnings),
+  **254/254 tests passing**, production build passing.
+- Live Supabase: the Milestone 3 migration is applied. News persistence and
+  RLS were exercised directly against the real schema inside a rolled-back
+  transaction: the scanner principal can write events, the `event_hash`
+  unique constraint refuses a duplicate, an invalid `news_risk` and an
+  oversized excerpt are both refused, a guest can READ news but cannot write
+  it (0 rows), and AI usage accounting accepts a token record.
+- Supabase security advisors report NO new findings from the four new
+  tables - only the two pre-existing, documented ones.
+
+### What could NOT be verified from this session
+
+The development sandbox blocks ALL outbound network access (even
+`api.bybit.com`, which production uses successfully). Therefore:
+
+- **No live news feed was fetched.** The RSS/Atom provider is implemented
+  against real publisher endpoints and verified against realistic wire-format
+  fixtures, but a live fetch is unproven until deployment.
+- **No real Qwen request was made.** The credential lives only in Vercel
+  environment variables, and the host would be blocked regardless. Every
+  Qwen path is covered by tests that mock the HTTP layer (success, non-JSON,
+  schema failure, 401, 429, timeout, missing credential, no usage block).
+
+Both are honest gaps, not assumptions of success. See "Blockers".
 
 ## VERIFIED_BASELINE (after Milestone 2)
 
@@ -45,6 +76,64 @@ carried by the preceding `feat(risk):` and `feat(milestone-1):` commits.
   NOOP still observed on ticks with no new closed candle - the additive
   migrations did not break the running (pre-change) deployment or the Cron
   path.
+
+## WHAT WAS BUILT (Milestone 3 — News Intelligence)
+
+### Schema (additive)
+
+`20260913210000_milestone3_news_intelligence.sql` - four tables, chosen as
+the minimum that covers deduplication, reproducibility, candidate linkage,
+analysis caching and AI accounting:
+
+- `news_events` - the deduplicated real-world event, with the AI analysis
+  cached ON the row (one current analysis per event, which is what makes
+  "never analyse the same event twice" a simple lookup).
+- `news_event_sources` - the syndicated copies that collapsed into it AND
+  the reason each matched, so a dedup decision can always be explained.
+- `candidate_news_links` - the relational index of which events a candidate
+  used (Milestone 4 will aggregate on this).
+- `ai_usage_events` - requests and tokens. Deliberately NO dollar figure.
+- `signals.news_risk` + `signals.news_snapshot` - the immutable context as
+  it stood at decision time.
+
+### Pipeline (`lib/news/`)
+
+`NewsProvider` -> normalize -> deduplicate -> deterministic classify ->
+AI analysis only where it earns its cost -> persist -> candidate context.
+
+- **Providers**: a dependency-free RSS/Atom parser plus four configured
+  publisher feeds (SEC and Federal Reserve as OFFICIAL; CoinDesk and
+  Cointelegraph as HIGH_QUALITY_MEDIA). Public publisher syndication feeds
+  only - no scraping, no browser automation, no paid credential, and a
+  polite identifying User-Agent.
+- **Deduplication**: canonical URL -> normalized headline -> token
+  similarity (Jaccard or containment, threshold 0.7). Biased conservative
+  on purpose: a false merge loses information, a false split costs one
+  stored event.
+- **Classification**: deterministic asset relevance, category and BASE risk
+  before any AI is considered. An important-sounding category alone is never
+  HIGH; speculation never is.
+- **AI gating**: an item must touch a traded asset, clear a relevance bar,
+  AND sit in a materially-capable category. A routine run makes ZERO calls,
+  and a per-run cap bounds an unusual one.
+- **Candidate context**: the most relevant recent events, snapshotted
+  immutably onto the signal row.
+
+### Guarantees
+
+`lib/news/isolation.test.ts` asserts structurally that `lib/risk/`,
+`lib/strategy/`, `lib/backtest/`, `lib/indicators/` and the candidate
+builder never import the news or Qwen modules - so news CANNOT reach
+sizing, stops, targets or eligibility. A separate test asserts a candidate
+is byte-identical whether news risk is LOW, HIGH or UNKNOWN.
+
+### Tests (+69 this milestone, 254 total)
+
+`news-core.test.ts` (31), `ingest.test.ts` (19), `news-analysis.test.ts`
+(15), `isolation.test.ts` (3), `milestone3-e2e.test.ts` (4 - raw feed
+through to Telegram formatting, then the same run with AI unavailable
+proving the identical deterministic candidate still appears with News Risk
+UNKNOWN).
 
 ## WHAT WAS BUILT (Milestone 2 — Telegram approval + PAPER positions)
 
@@ -243,31 +332,40 @@ None. Pre-existing hardening items from the Codex handoff remain open (see
 
 ## NEXT_ACTION
 
-Two things are open, in this order of importance:
+Three things are open, in this order of importance:
 
-1. **Owner decision (not a coding task): Strategy v1 DRAFT -> PAPER_APPROVED.**
+1. **Deploy this branch.** Milestones 1-3 are all branch-only. Until then:
+   no live news fetch, no real Qwen call, and no Telegram verification are
+   possible. Deployment also unblocks activating the news cron (see
+   `docs/OPERATIONS.md` - the Edge function is written but deliberately NOT
+   scheduled, because scheduling it against the current production build
+   would just log a failed job every 15 minutes).
+2. **Owner decision (not a coding task): Strategy v1 DRAFT -> PAPER_APPROVED.**
    Read `docs/STRATEGY_V1_PAPER_READINESS.md`. The recommendation is NOT YET:
    zero backtests have ever been run, so there is no sample size, expectancy,
-   profit factor or drawdown to judge. The report lists exactly what would
-   make the decision answerable. Do NOT flip this status to make the pipeline
-   visibly work.
-2. **Milestone 3 (News + Qwen).** A separate News Intelligence module:
-   `NewsProvider -> normalize -> deduplicate -> event clustering -> asset
-   relevance -> Qwen structured analysis -> candidate context`. News informs
-   a trade; it never creates one. Most 5-minute scans must make zero Qwen
-   calls, and Qwen failure must not stop the scanner, strategy, risk,
-   Telegram or PAPER management. The `news` field already exists structurally
-   on `TradeCandidate` and is deliberately omitted from Telegram until real
-   data backs it.
+   profit factor or drawdown to judge. Do NOT flip this status to make the
+   pipeline visibly work.
+3. **Milestone 4 (Controlled learning).** Record complete candidate/trade
+   snapshots; compute realized P/L, R, fees, slippage, duration, exit reason,
+   MFE and MAE; track approved / owner-rejected / risk-blocked candidates
+   (counterfactuals clearly labelled and never counted as portfolio profit);
+   aggregate by symbol, strategy version, score, regime, volatility, **news
+   risk** (already persisted on every signal), time of day, stop distance,
+   R/R and approval delay. Never let one loss edit the strategy: evidence ->
+   hypothesis -> a NEW strategy version -> backtest -> validation -> untouched
+   holdout -> walk-forward -> owner review -> activation.
 
-Conventions to preserve in Milestone 3+:
+Conventions to preserve in Milestone 4+:
 - `signals.rejection_reason` set = engine rejection; null with
   `owner_decision='REJECTED'` = owner rejection. One state machine.
 - Never add a second dedup mechanism; the signals unique constraint and
   `trades_one_per_signal` are authoritative.
+- News is context only. Do not let the learning layer feed news back into
+  sizing or eligibility; it may only be an ANALYSIS DIMENSION.
+- AI usage carries no dollar figure on purpose - do not invent one.
 - Deployment of this branch has not happened yet (see Caveat B).
 
 ## REMAINING_TASK_A_WORK
-Milestone 3 (News + Qwen) -> Milestone 4 (Controlled learning) ->
-Milestone 5 (Trading Command Center UI) -> Milestone 6 (staging ->
-production promotion with full manual verification).
+Milestone 4 (Controlled learning) -> Milestone 5 (Trading Command Center
+UI) -> Milestone 6 (staging -> production promotion with full manual
+verification).

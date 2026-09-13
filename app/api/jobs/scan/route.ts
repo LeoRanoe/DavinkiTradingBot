@@ -13,6 +13,10 @@ import { buildCandidateForScan } from "@/lib/candidates/from-settings";
 import { buildSignalRow } from "@/lib/candidates/persistence";
 import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
 import { getAppUrl } from "@/lib/config/env";
+import { loadRecentNewsEvents } from "@/lib/news/store";
+import { buildCandidateNewsContext, DEFAULT_NEWS_WINDOW_MS } from "@/lib/news/candidate-context";
+import type { CandidateNewsContext } from "@/lib/news/types";
+import type { NewsEvent } from "@/lib/news/types";
 import type { InstrumentRules } from "@/lib/risk/types";
 import {
   sendTelegramMessage,
@@ -143,6 +147,30 @@ export async function POST(request: NextRequest) {
   } catch (sweepErr) {
     errors.push(`candidate sweep: ${(sweepErr as Error).message}`);
   }
+
+  // News context is CONTEXT ONLY and is loaded lazily: a scan with no
+  // candidate never touches the news tables, and a news failure can never
+  // stop a candidate from being produced (it becomes UNKNOWN instead).
+  let newsEvents: NewsEvent[] | null = null;
+  let newsUnavailable = false;
+  const newsContextFor = async (symbol: string, nowMs: number): Promise<CandidateNewsContext> => {
+    if (newsEvents === null && !newsUnavailable) {
+      try {
+        newsEvents = await loadRecentNewsEvents(
+          admin,
+          new Date(nowMs - DEFAULT_NEWS_WINDOW_MS).toISOString(),
+        );
+      } catch {
+        newsUnavailable = true;
+      }
+    }
+    return buildCandidateNewsContext({
+      symbol,
+      events: newsEvents ?? [],
+      nowMs,
+      unavailable: newsUnavailable,
+    });
+  };
 
   // ---------------------------------------------------------------------
   // PHASE 2 - evaluate new closed strategy candles.
@@ -311,6 +339,9 @@ export async function POST(request: NextRequest) {
         else candidatesRejected += 1;
       }
 
+      const newsContext =
+        candidateResult?.kind === "CANDIDATE" ? await newsContextFor(symbol, nowMs) : undefined;
+
       const { data: insertedSignal, error: signalError } = await admin
         .from("signals")
         .insert({
@@ -330,6 +361,7 @@ export async function POST(request: NextRequest) {
             signalExpiryMinutes: settings.signalExpiryMinutes,
             candidateExpiryMinutes: settings.candidateExpiryMinutes,
             nowMs,
+            newsContext,
           }),
         })
         .select("id")
@@ -359,6 +391,24 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // Relational index of which events this candidate used. The immutable
+      // snapshot on the signal row remains the authority for display.
+      if (insertedSignal && newsContext && newsContext.events.length > 0) {
+        await admin
+          .from("candidate_news_links")
+          .insert(
+            newsContext.events.map((event, index) => ({
+              signal_id: insertedSignal.id,
+              news_event_id: event.id,
+              position: index,
+            })),
+          )
+          .then(
+            () => undefined,
+            () => undefined, // context linkage must never fail a scan
+          );
+      }
+
       // An ACTIONABLE recommendation is sent only for a candidate that is
       // strategy-valid, risk-valid, exchange-valid, unexpired, fresh, unique
       // and permitted by the current mode - i.e. exactly the rows that
@@ -376,7 +426,7 @@ export async function POST(request: NextRequest) {
             : `${(settings.maxRiskPerTradePct * 100).toFixed(2)}% of equity`;
 
         await sendTelegramMessage(
-          formatCandidateMessage({ candidate, riskModeLabel, validForMinutes }),
+          formatCandidateMessage({ candidate, riskModeLabel, validForMinutes, news: newsContext }),
           { replyMarkup: buildCandidateKeyboard(insertedSignal.id, getAppUrl()) },
         ).catch(() => undefined);
       }

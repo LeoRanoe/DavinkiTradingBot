@@ -35,6 +35,28 @@ rejects callers whose signed `app_metadata.role` is not `owner`.
   Vault-held scanner credential for a short-lived scoped JWT. Only Telegram
   callback execution and the manual Cron fallback still use the admin client.
 
+## News intelligence and AI (Milestone 3)
+- News tables (`news_events`, `news_event_sources`, `candidate_news_links`,
+  `ai_usage_events`) all have RLS enabled: authenticated users read, only the
+  scanner principal writes. Verified live; Supabase security advisors report
+  no new findings from them.
+- The news module is structurally isolated from the trading engine - a test
+  fails the build if `lib/risk/`, `lib/strategy/`, `lib/backtest/`,
+  `lib/indicators/` or the candidate builder ever imports it. AI output can
+  therefore never reach sizing, stops, targets, eligibility or execution.
+- Model output is NEVER executed or evaluated. It is parsed as JSON inside a
+  try/catch and then validated by a Zod schema; anything that fails either
+  step is discarded and recorded as a failure.
+- External content (headlines, excerpts) is stored as compact text and only
+  ever rendered as text - a database CHECK constraint caps excerpt length so
+  full articles cannot be stored, and outbound links carry
+  `rel="noopener noreferrer nofollow"`.
+- AI error messages are mapped to coarse classes (AUTH, RATE_LIMIT, TIMEOUT,
+  MALFORMED_OUTPUT, UNAVAILABLE) before being stored, so a provider message
+  cannot echo input or credentials into the database.
+- Outbound feed requests send a polite, identifiable User-Agent with a
+  contact URL, as publishers such as the SEC ask automated clients to do.
+
 ## Webhooks / cron (Phase 10, 13)
 - `/api/jobs/scan` accepts the dedicated scanner JWT. `CRON_SECRET` is retained
   only as a manual fallback.

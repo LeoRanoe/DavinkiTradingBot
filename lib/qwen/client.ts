@@ -1,12 +1,22 @@
 import { getQwenConfiguration } from "@/lib/config/integrations";
 import { qwenSignalExplanationSchema, qwenTradeReviewSchema, type QwenSignalExplanation, type QwenTradeReview } from "./schemas";
+import { qwenNewsAnalysisSchema, type QwenNewsAnalysis } from "./news-schema";
 
 export type QwenStatus = "AVAILABLE" | "NOT_CONFIGURED" | "UNAVAILABLE";
 
+/** Token accounting reported by the provider, when it reports any. */
+export type QwenUsage = {
+  model: string;
+  inputTokens: number | null;
+  outputTokens: number | null;
+  totalTokens: number | null;
+  latencyMs: number;
+};
+
 export type QwenResult<T> =
-  | { status: "OK"; data: T }
+  | { status: "OK"; data: T; usage?: QwenUsage }
   | { status: "NOT_CONFIGURED" }
-  | { status: "ERROR"; message: string };
+  | { status: "ERROR"; message: string; usage?: QwenUsage };
 
 /**
  * Qwen client interface. The trading engine never depends on this returning
@@ -20,6 +30,23 @@ export type QwenResult<T> =
 async function callQwen(systemPrompt: string, userPrompt: string): Promise<QwenResult<unknown>> {
   const config = await getQwenConfiguration();
   if (!config) return { status: "NOT_CONFIGURED" };
+
+  const startedAt = Date.now();
+  const usageOf = (raw: unknown): QwenUsage => {
+    const u = (raw as { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number } | undefined) ?? {};
+    return {
+      model: config.model,
+      inputTokens: typeof u.prompt_tokens === "number" ? u.prompt_tokens : null,
+      outputTokens: typeof u.completion_tokens === "number" ? u.completion_tokens : null,
+      totalTokens: typeof u.total_tokens === "number" ? u.total_tokens : null,
+      latencyMs: Date.now() - startedAt,
+    };
+  };
+  const failed = (message: string): QwenResult<unknown> => ({
+    status: "ERROR",
+    message,
+    usage: usageOf(undefined),
+  });
 
   try {
     const controller = new AbortController();
@@ -44,23 +71,30 @@ async function callQwen(systemPrompt: string, userPrompt: string): Promise<QwenR
     clearTimeout(timeout);
 
     if (res.status === 401 || res.status === 403) {
-      return { status: "ERROR", message: "Authentication failed" };
+      return failed("Authentication failed");
     }
     if (res.status === 429) {
-      return { status: "ERROR", message: "Rate limited" };
+      return failed("Rate limited");
     }
     if (!res.ok) {
-      return { status: "ERROR", message: `Provider unavailable (HTTP ${res.status})` };
+      return failed(`Provider unavailable (HTTP ${res.status})`);
     }
 
     const json = await res.json();
+    const usage = usageOf(json?.usage);
     const content = json?.choices?.[0]?.message?.content;
-    if (!content) return { status: "ERROR", message: "Empty response from provider" };
+    if (!content) return { status: "ERROR", message: "Empty response from provider", usage };
 
-    return { status: "OK", data: JSON.parse(content) };
+    try {
+      return { status: "OK", data: JSON.parse(content), usage };
+    } catch {
+      // The model returned something that is not JSON at all. Never eval it,
+      // never store it - report a clean failure.
+      return { status: "ERROR", message: "Provider returned non-JSON content", usage };
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return { status: "ERROR", message: message.includes("abort") ? "Provider unavailable (timeout)" : message };
+    return failed(message.includes("abort") ? "Provider unavailable (timeout)" : message);
   }
 }
 
@@ -108,6 +142,47 @@ export async function reviewTrade(input: {
   const parsed = qwenTradeReviewSchema.safeParse(result.data);
   if (!parsed.success) return { status: "ERROR", message: "Provider returned malformed structured output" };
   return { status: "OK", data: parsed.data };
+}
+
+const NEWS_SYSTEM_PROMPT = `You analyse a single news item for a deterministic crypto trading system.
+You provide CONTEXT ONLY. You never decide trades, position sizes, stops, targets or entries,
+and nothing you output can authorise or block an order.
+Judge how much EVENT RISK / UNCERTAINTY the item introduces - this is NOT a buy or sell view.
+Be conservative: if the item is speculation, rumour or commentary, say so in "uncertainty" and
+keep potentialImpact LOW or UNKNOWN. Only use HIGH for a concrete, confirmed, market-wide event.
+Never invent prices, numbers, dates or facts that are not in the input.
+Respond as JSON only:
+{ "summary": string, "affectedAssets": ("BTC"|"ETH"|"CRYPTO_MARKET"|"USD"|"MACRO"|"XAUUSD")[],
+  "sentiment": "POSITIVE"|"NEGATIVE"|"MIXED"|"NEUTRAL"|"UNKNOWN",
+  "potentialImpact": "LOW"|"MEDIUM"|"HIGH"|"UNKNOWN",
+  "timeHorizon": "IMMEDIATE"|"SHORT_TERM"|"MEDIUM_TERM"|"UNKNOWN",
+  "relevance": number between 0 and 1, "reasoning": string, "uncertainty": string }`;
+
+/**
+ * Analyses one news event. Called only for items the DETERMINISTIC
+ * classifier already judged relevant and potentially material, and only
+ * once per event - see lib/news/classify.ts and the analysis cache.
+ */
+export async function analyzeNewsEvent(input: {
+  headline: string;
+  source: string;
+  sourceQuality: string;
+  category: string;
+  publishedAt: string;
+  excerpt: string | null;
+}): Promise<QwenResult<QwenNewsAnalysis>> {
+  const result = await callQwen(NEWS_SYSTEM_PROMPT, JSON.stringify(input));
+  if (result.status !== "OK") return result;
+
+  const parsed = qwenNewsAnalysisSchema.safeParse(result.data);
+  if (!parsed.success) {
+    return {
+      status: "ERROR",
+      message: "Provider returned malformed structured output",
+      usage: result.usage,
+    };
+  }
+  return { status: "OK", data: parsed.data, usage: result.usage };
 }
 
 /** Cheap connectivity check for the Settings -> Connections "Test connection" button. */

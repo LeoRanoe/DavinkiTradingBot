@@ -16,6 +16,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      ai_usage_events: {
+        Row: {
+          created_at: string
+          error_kind: string | null
+          feature: string
+          id: string
+          input_tokens: number | null
+          latency_ms: number | null
+          model: string | null
+          output_tokens: number | null
+          provider: string
+          success: boolean
+          total_tokens: number | null
+        }
+        Insert: {
+          created_at?: string
+          error_kind?: string | null
+          feature: string
+          id?: string
+          input_tokens?: number | null
+          latency_ms?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          provider?: string
+          success: boolean
+          total_tokens?: number | null
+        }
+        Update: {
+          created_at?: string
+          error_kind?: string | null
+          feature?: string
+          id?: string
+          input_tokens?: number | null
+          latency_ms?: number | null
+          model?: string | null
+          output_tokens?: number | null
+          provider?: string
+          success?: boolean
+          total_tokens?: number | null
+        }
+        Relationships: []
+      }
       audit_events: {
         Row: {
           action: string
@@ -148,6 +190,48 @@ export type Database = {
             columns: ["strategy_version_id"]
             isOneToOne: false
             referencedRelation: "strategy_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      candidate_news_links: {
+        Row: {
+          created_at: string
+          id: string
+          news_event_id: string
+          position: number
+          relevance_score: number
+          signal_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          news_event_id: string
+          position?: number
+          relevance_score?: number
+          signal_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          news_event_id?: string
+          position?: number
+          relevance_score?: number
+          signal_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "candidate_news_links_news_event_id_fkey"
+            columns: ["news_event_id"]
+            isOneToOne: false
+            referencedRelation: "news_events"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "candidate_news_links_signal_id_fkey"
+            columns: ["signal_id"]
+            isOneToOne: false
+            referencedRelation: "signals"
             referencedColumns: ["id"]
           },
         ]
@@ -473,6 +557,122 @@ export type Database = {
           },
         ]
       }
+      news_event_sources: {
+        Row: {
+          canonical_url: string
+          headline: string
+          id: string
+          match_reason: string
+          news_event_id: string
+          provider: string
+          seen_at: string
+          similarity: number | null
+          source: string
+        }
+        Insert: {
+          canonical_url: string
+          headline: string
+          id?: string
+          match_reason: string
+          news_event_id: string
+          provider: string
+          seen_at?: string
+          similarity?: number | null
+          source: string
+        }
+        Update: {
+          canonical_url?: string
+          headline?: string
+          id?: string
+          match_reason?: string
+          news_event_id?: string
+          provider?: string
+          seen_at?: string
+          similarity?: number | null
+          source?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "news_event_sources_news_event_id_fkey"
+            columns: ["news_event_id"]
+            isOneToOne: false
+            referencedRelation: "news_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      news_events: {
+        Row: {
+          affected_assets: string[]
+          analysis: Json | null
+          analysis_model: string | null
+          analysis_status: string
+          analyzed_at: string | null
+          canonical_url: string
+          category: string
+          created_at: string
+          duplicate_count: number
+          event_hash: string
+          excerpt: string | null
+          fetched_at: string
+          headline: string
+          id: string
+          matched_terms: string[]
+          news_risk: string
+          provider: string
+          published_at: string
+          relevance_score: number
+          source: string
+          source_quality: string
+        }
+        Insert: {
+          affected_assets?: string[]
+          analysis?: Json | null
+          analysis_model?: string | null
+          analysis_status?: string
+          analyzed_at?: string | null
+          canonical_url: string
+          category?: string
+          created_at?: string
+          duplicate_count?: number
+          event_hash: string
+          excerpt?: string | null
+          fetched_at?: string
+          headline: string
+          id?: string
+          matched_terms?: string[]
+          news_risk?: string
+          provider: string
+          published_at: string
+          relevance_score?: number
+          source: string
+          source_quality?: string
+        }
+        Update: {
+          affected_assets?: string[]
+          analysis?: Json | null
+          analysis_model?: string | null
+          analysis_status?: string
+          analyzed_at?: string | null
+          canonical_url?: string
+          category?: string
+          created_at?: string
+          duplicate_count?: number
+          event_hash?: string
+          excerpt?: string | null
+          fetched_at?: string
+          headline?: string
+          id?: string
+          matched_terms?: string[]
+          news_risk?: string
+          provider?: string
+          published_at?: string
+          relevance_score?: number
+          source?: string
+          source_quality?: string
+        }
+        Relationships: []
+      }
       order_events: {
         Row: {
           created_at: string
@@ -661,6 +861,8 @@ export type Database = {
           indicator_snapshot: Json | null
           maximum_allowed_entry: number | null
           minimum_allowed_entry: number | null
+          news_risk: string | null
+          news_snapshot: Json | null
           owner_decision: string | null
           planned_entry: number | null
           processed_at: string | null
@@ -698,6 +900,8 @@ export type Database = {
           indicator_snapshot?: Json | null
           maximum_allowed_entry?: number | null
           minimum_allowed_entry?: number | null
+          news_risk?: string | null
+          news_snapshot?: Json | null
           owner_decision?: string | null
           planned_entry?: number | null
           processed_at?: string | null
@@ -735,6 +939,8 @@ export type Database = {
           indicator_snapshot?: Json | null
           maximum_allowed_entry?: number | null
           minimum_allowed_entry?: number | null
+          news_risk?: string | null
+          news_snapshot?: Json | null
           owner_decision?: string | null
           planned_entry?: number | null
           processed_at?: string | null

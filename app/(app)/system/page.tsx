@@ -19,12 +19,25 @@ function Row({ label, level, detail }: { label: string; level: SystemHealthLevel
 export default async function SystemPage() {
   const supabase = await createClient();
 
-  const [{ data: jobRuns }, qwenConfig, telegramConfig, demoConfig] = await Promise.all([
-    supabase.from("job_runs").select("*").eq("job_name", "scan").order("started_at", { ascending: false }).limit(10),
-    getQwenConfiguration().catch(() => null),
-    getTelegramConfiguration().catch(() => null),
-    getBybitDemoConfiguration().catch(() => null),
-  ]);
+  const [{ data: jobRuns }, qwenConfig, telegramConfig, demoConfig, { data: newsJob }, { data: aiUsage }] =
+    await Promise.all([
+      supabase.from("job_runs").select("*").eq("job_name", "scan").order("started_at", { ascending: false }).limit(10),
+      getQwenConfiguration().catch(() => null),
+      getTelegramConfiguration().catch(() => null),
+      getBybitDemoConfiguration().catch(() => null),
+      supabase
+        .from("job_runs")
+        .select("started_at, status, records_processed, error_summary")
+        .eq("job_name", "news")
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle(),
+      supabase
+        .from("ai_usage_events")
+        .select("feature, success, total_tokens, created_at, error_kind")
+        .order("created_at", { ascending: false })
+        .limit(50),
+    ]);
 
   const lastRun = jobRuns?.[0];
   // Server Component: this value is intentionally evaluated once per request
@@ -40,6 +53,35 @@ export default async function SystemPage() {
         : lastRun.status === "SUCCEEDED" || lastRun.status === "NOOP"
           ? "HEALTHY"
           : "WARNING";
+
+  // News ingestion health. Deliberately NOT "healthy because a feed URL is
+  // configured": it reflects whether the job actually ran and what happened.
+  // eslint-disable-next-line react-hooks/purity
+  const newsAgeMs = newsJob ? Date.now() - new Date(newsJob.started_at).getTime() : null;
+  const newsLevel: SystemHealthLevel = !newsJob
+    ? "UNKNOWN"
+    : newsJob.status === "FAILED"
+      ? "ERROR"
+      : newsAgeMs !== null && newsAgeMs > 60 * 60_000
+        ? "WARNING"
+        : newsJob.error_summary
+          ? "WARNING"
+          : "HEALTHY";
+
+  const aiCalls = aiUsage ?? [];
+  const aiFailures = aiCalls.filter((u) => !u.success);
+  const lastAiSuccess = aiCalls.find((u) => u.success);
+  const totalTokens = aiCalls.reduce((sum, u) => sum + (u.total_tokens ?? 0), 0);
+
+  // Qwen health is evidence-based: a configured credential alone proves
+  // nothing, a recent successful call does.
+  const qwenLevel: SystemHealthLevel = !qwenConfig
+    ? "WARNING"
+    : lastAiSuccess
+      ? "HEALTHY"
+      : aiFailures.length > 0
+        ? "ERROR"
+        : "UNKNOWN";
 
   return (
     <div className="space-y-6">
@@ -64,9 +106,26 @@ export default async function SystemPage() {
             detail={lastRun ? `Last run: ${new Date(lastRun.started_at).toLocaleString()} - ${lastRun.status}` : "Has not run yet."}
           />
           <Row
+            label="News ingestion"
+            level={newsLevel}
+            detail={
+              newsJob
+                ? `Last run: ${new Date(newsJob.started_at).toLocaleString()} - ${newsJob.status}, ${newsJob.records_processed} new event(s).${newsJob.error_summary ? ` Provider issues: ${newsJob.error_summary}` : ""}`
+                : "Has not run yet. Trading is unaffected either way."
+            }
+          />
+          <Row
             label="Qwen (AI coach)"
-            level={qwenConfig ? "UNKNOWN" : "WARNING"}
-            detail={qwenConfig ? `Configured via ${qwenConfig.source}; use Settings → Test connection for a live check. Trading continues normally either way.` : "Not configured - explanations/lessons unavailable, trading unaffected."}
+            level={qwenLevel}
+            detail={
+              !qwenConfig
+                ? "Not configured - news analysis, explanations and lessons unavailable. Trading unaffected."
+                : lastAiSuccess
+                  ? `Configured via ${qwenConfig.source}; model ${qwenConfig.model}. Last successful call ${new Date(lastAiSuccess.created_at).toLocaleString()}.`
+                  : aiFailures.length > 0
+                    ? `Configured via ${qwenConfig.source}, but the last ${aiFailures.length} call(s) failed (${aiFailures[0].error_kind ?? "unknown"}). Trading is unaffected.`
+                    : `Configured via ${qwenConfig.source}; no call has been made yet, so health is unproven.`
+            }
           />
           <Row
             label="Telegram"
@@ -78,6 +137,29 @@ export default async function SystemPage() {
             level={demoConfig ? "HEALTHY" : "WARNING"}
             detail={demoConfig ? `Configured via ${demoConfig.source}.` : "Not configured - Demo execution unavailable, paper trading unaffected."}
           />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">AI usage (last 50 calls)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {aiCalls.length === 0 ? (
+            <p className="text-muted-foreground text-sm">
+              No AI calls recorded. Routine scans and ingestion runs are expected to make none.
+            </p>
+          ) : (
+            <div className="text-sm">
+              <p>
+                {aiCalls.length} call(s), {aiFailures.length} failed, {totalTokens.toLocaleString()} tokens total.
+              </p>
+              <p className="text-muted-foreground mt-1 text-xs">
+                Token counts only - no monetary cost is shown, because reliable per-token pricing for the configured
+                model is not known to this application.
+              </p>
+            </div>
+          )}
         </CardContent>
       </Card>
 

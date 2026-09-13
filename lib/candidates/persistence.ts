@@ -1,6 +1,7 @@
 import type { Database } from "@/lib/supabase/database.types";
 import type { TradingMode } from "@/lib/types/trading-mode";
 import type { ScoreComponent, ScoreResult } from "@/lib/strategy/v1/score";
+import type { CandidateNewsContext } from "@/lib/news/types";
 import type { CandidateBuildResult, IndicatorSnapshot } from "./types";
 
 export type SignalInsertRow = Database["public"]["Tables"]["signals"]["Insert"];
@@ -23,6 +24,12 @@ export type SignalRowInput = {
   signalExpiryMinutes: number;
   candidateExpiryMinutes: number;
   nowMs: number;
+  /**
+   * Immutable news context as it stood at decision time (Milestone 3).
+   * Context only: it is persisted alongside the candidate and shown to the
+   * owner, and is never read by the risk engine or the sizing path.
+   */
+  newsContext?: CandidateNewsContext;
 };
 
 /**
@@ -90,6 +97,8 @@ export function buildSignalRow(input: SignalRowInput): SignalInsertRow {
     ...base,
     approval_status: "PENDING",
     expires_at: new Date(effectiveExpiryMs).toISOString(),
+    news_risk: input.newsContext?.newsRisk ?? null,
+    news_snapshot: (input.newsContext ?? null) as unknown as SignalInsertRow["news_snapshot"],
     planned_entry: candidate.position.plannedEntry,
     minimum_allowed_entry: candidate.position.minimumAllowedEntry,
     maximum_allowed_entry: candidate.position.maximumAllowedEntry,

@@ -101,6 +101,8 @@ export function makePendingSignal(overrides: Partial<SignalRow> = {}): SignalRow
     decision_source: null,
     approval_delay_ms: null,
     processed_at: null,
+    news_risk: null,
+    news_snapshot: null,
     ...overrides,
   };
 }

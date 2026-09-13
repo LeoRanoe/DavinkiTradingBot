@@ -141,3 +141,39 @@
   reading owner settings, and closed positions with a non-atomic
   read-then-write. `position-manager.ts` supersedes it completely; leaving
   buggy dead code invites its reuse.
+- **News is isolated structurally, not just by convention.** A test walks
+  the import graph and fails if `lib/risk/`, `lib/strategy/`,
+  `lib/backtest/`, `lib/indicators/` or the candidate builder ever imports
+  the news or Qwen modules. "News must not affect trades" is the kind of
+  rule that erodes silently under future edits; making it a build failure is
+  the only version that survives.
+- **The AI analysis is cached on the event row, not in a separate table.**
+  There is exactly one current analysis per event, so a column keeps "never
+  analyse the same event twice" a single lookup instead of a join.
+- **Three distinct news states, never conflated.** `LOW` with
+  NO_RELEVANT_EVENTS means we looked and found nothing; `UNKNOWN` with
+  UNAVAILABLE means we could not look. Collapsing them would quietly tell
+  the owner "nothing to worry about" during an outage.
+- **AI may raise news risk but can only lower it one step.** A confident
+  model cannot talk the system out of a deterministic warning, which keeps
+  the deterministic classification the floor rather than a suggestion.
+- **Deduplication is biased toward splitting, not merging.** Canonical URL,
+  then normalized headline, then token similarity at 0.7 (Jaccard or
+  containment). A false merge loses information and could attach the wrong
+  context to a candidate; a false split costs one extra stored event. The
+  tokenizer keeps multi-digit numbers precisely because "$4 billion" and
+  "$40 billion" are different stories.
+- **AI gating requires a materially-capable CATEGORY, not just relevance.**
+  Routine adoption and partnership items clear a relevance bar easily and
+  would quietly turn every ingestion run into an AI run.
+- **No dollar cost is stored for AI usage.** Reliable per-token pricing for
+  the configured model is not known to this application, and the owner would
+  make budget decisions on a fabricated number. Requests and tokens are
+  recorded; cost is not.
+- **The news cron was written but deliberately left unscheduled.**
+  Activating it before the code that serves `/api/jobs/news` is deployed
+  would log a failed job every 15 minutes against production.
+- **A dependency-free RSS/Atom parser instead of an npm package.** Only a
+  handful of well-specified fields are needed from feeds we explicitly
+  choose; a tightly scoped parser is easier to reason about and keeps the
+  supply-chain surface out of the trading system.
