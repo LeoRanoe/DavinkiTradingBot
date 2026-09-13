@@ -45,12 +45,19 @@ Last updated: 2026-09-13 (autonomous build session 1, end of session)
   generated and stored locally (not yet in Vercel - no project exists yet).
 - **Phase 11-12** Qwen client behind an interface, structured/Zod-validated
   output (FACT/INTERPRETATION/EDUCATIONAL_NOTE/RISK tags), degrades to
-  NOT_CONFIGURED without throwing. Knowledge base schema exists
-  (knowledge_documents/knowledge_chunks with pgvector+hnsw); ingestion
-  pipeline not yet built (no QWEN_API_KEY to test embeddings against).
+  NOT_CONFIGURED without throwing. **Verified live** against the user's
+  provider (a custom OpenAI-compatible gateway at
+  `token-plan.ap-southeast-1.maas.aliyuncs.com`, model `qwen3.8-flash` -
+  discovered via that gateway's `/models` endpoint; the default
+  `qwen-turbo`/DashScope combination does not exist there) -
+  `explainSignal()` produced correct, well-tagged, non-fabricated output.
+  `QWEN_BASE_URL`/`QWEN_MODEL` must be set to these values for this
+  provider. Knowledge base schema exists (knowledge_documents/
+  knowledge_chunks with pgvector+hnsw); ingestion pipeline not yet built.
 - **Phase 13** Telegram client (send message, webhook secret verification,
   owner-user authorization), webhook route, candidate message formatting.
-  Not tested end-to-end (no bot token supplied).
+  **Verified live** - a real message was sent to the owner's chat using
+  the supplied bot token.
 - **Phase 14** Paper trading: fill simulation matching the backtester's fee/
   slippage model, `approveAndExecuteSignal()` as the single execution path
   (used by both dashboard buttons and the Telegram webhook), open-position
@@ -62,25 +69,32 @@ Last updated: 2026-09-13 (autonomous build session 1, end of session)
   execute path; System page surfaces integration health.
 
 ## Known blockers (env var names / account actions only, never secret values)
-- **Vercel deployment is blocked**: creating a Git-linked Vercel project
-  failed with "You need to add a Login Connection to your GitHub account
-  first" (Vercel API `bad_request`). This is a one-time account-level step
-  only the project owner can perform: sign in to vercel.com -> Account
-  Settings -> Login Connections -> connect GitHub. Once connected, create
-  the project (link to `LeoRanoe/DavinkiTradingBot`) and it will deploy
-  automatically. I deliberately did not fall back to a manual, unlinked
-  file upload - that would produce a deployment disconnected from the repo
-  that stops receiving updates, which is worse than staying undeployed.
+- **Vercel deployment**: RESOLVED - GitHub is now connected, project
+  `davinki-trading-bot` created and linked to `LeoRanoe/DavinkiTradingBot`
+  (auto-deploys on push). Currently returns HTTP 500 on every route because
+  no environment variables are set on Vercel yet - the MCP tooling
+  available in this session has no env-var-management capability, so this
+  must be done by the project owner in the Vercel dashboard (Project ->
+  Settings -> Environment Variables). See TASKS.md for the exact list.
 - `SUPABASE_SECRET_KEY` - connected Supabase tooling cannot retrieve
   privileged keys. Copy from Supabase Dashboard -> Project Settings -> API
-  -> service_role/secret key, into Vercel env vars once the project exists,
-  and into local `.env.local` for local dev.
-- `QWEN_API_KEY`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_USER_ID`,
-  `TELEGRAM_CHAT_ID`, `BYBIT_DEMO_API_KEY`, `BYBIT_DEMO_API_SECRET` - not
-  supplied in this environment. App boots and paper-trades fine without them.
+  -> service_role/secret key, into Vercel env vars, and into local
+  `.env.local` for local dev. **This is the only remaining credential
+  blocker** - Qwen, Telegram, and the two generated secrets are resolved
+  (see below).
+- `QWEN_API_KEY` - supplied via the Claude Code Cloud environment and
+  **verified live**: works against `QWEN_BASE_URL=https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1`
+  with `QWEN_MODEL=qwen3.8-flash` (discovered via that gateway's `/models`
+  endpoint - the code's default DashScope base URL/model do not apply to
+  this provider). These three values must be set on Vercel together.
+- `TELEGRAM_BOT_TOKEN`, `TELEGRAM_OWNER_USER_ID`, `TELEGRAM_CHAT_ID` -
+  supplied via the Claude Code Cloud environment and **verified live** (a
+  real message was sent to the owner's chat).
+- `BYBIT_DEMO_API_KEY`, `BYBIT_DEMO_API_SECRET` - not supplied. App boots
+  and paper-trades fine without them.
 - `CRON_SECRET`, `TELEGRAM_WEBHOOK_SECRET` - generated securely, stored only
-  in local `.env.local` (gitignored, never committed). Must be copied into
-  Vercel env vars once the project exists, and Supabase Cron must be
+  in local `.env.local` (gitignored, never committed, never printed to
+  chat). Must be copied into Vercel env vars, and Supabase Cron must be
   configured to call `/api/jobs/scan` with the same `CRON_SECRET`.
 
 ## Not yet done
@@ -96,9 +110,9 @@ Last updated: 2026-09-13 (autonomous build session 1, end of session)
   visually verified in a browser this session).
 
 ## Next up
-1. Owner connects GitHub to Vercel, project gets created and deployed.
-2. Owner supplies `SUPABASE_SECRET_KEY` in Vercel env vars.
-3. Configure Supabase Cron to call `/api/jobs/scan` every 5 minutes with
-   `CRON_SECRET`.
-4. Supply Qwen/Telegram credentials (env or, once the app is live, via
-   Settings -> Connections) to light up those integrations.
+1. Owner sets all env vars in Vercel (Project -> Settings -> Environment
+   Variables) - see TASKS.md for the exact list - and triggers a redeploy.
+2. Once the site loads, configure Supabase Cron to call `/api/jobs/scan`
+   every 5 minutes with `CRON_SECRET`.
+3. Register the Telegram webhook against the live URL with
+   `TELEGRAM_WEBHOOK_SECRET`.
