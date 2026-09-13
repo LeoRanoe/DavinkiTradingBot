@@ -2,12 +2,13 @@ import { createClient } from "@/lib/supabase/server";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { MetricCard } from "@/components/dashboard/metric-card";
 import { BarChart3 } from "lucide-react";
+import { PerformanceCharts } from "@/components/charts/performance-charts";
 
 const MIN_SAMPLE = 20;
 
 export default async function PerformancePage() {
   const supabase = await createClient();
-  const { data: closedTrades } = await supabase.from("trades").select("pnl, r_multiple, fees").eq("status", "CLOSED");
+  const [{ data: closedTrades }, { data: snapshots }] = await Promise.all([supabase.from("trades").select("pnl, r_multiple, fees, closed_at, symbol").eq("status", "CLOSED").order("closed_at", { ascending: true }).limit(500), supabase.from("portfolio_snapshots").select("equity, taken_at").eq("trading_mode", "PAPER").order("taken_at", { ascending: true }).limit(500)]);
 
   const trades = closedTrades ?? [];
   const wins = trades.filter((t) => (t.pnl ?? 0) > 0);
@@ -44,6 +45,7 @@ export default async function PerformancePage() {
             <MetricCard label="Trades" value={`${trades.length}`} sublabel={`${wins.length}W / ${losses.length}L`} />
             <MetricCard label="Total Fees" value={`$${totalFees.toFixed(2)}`} />
           </div>
+          <PerformanceCharts equity={(snapshots ?? []).map((row) => ({ time: new Date(row.taken_at).getTime(), equity: Number(row.equity) }))} trades={trades.map((row) => ({ time: row.closed_at ? new Date(row.closed_at).getTime() : 0, r: row.r_multiple, pnl: row.pnl, symbol: row.symbol }))} />
         </>
       )}
     </div>

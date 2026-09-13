@@ -4,6 +4,9 @@ Last updated: 2026-09-13
 
 ## Current target
 
+- Milestone 5.5 visual analytics is complete on the integration branch.
+  It is read-only UI work; deployment and promotion remain Milestone 6 work.
+
 - Milestone 5 command-center UI is complete on
   `claude/davinki-milestone-4-integrated`; application deployment and
   promotion remain Milestone 6 work.

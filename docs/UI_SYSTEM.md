@@ -62,3 +62,16 @@ All metrics, timelines, statuses, and empty states are backed by persisted
 data. The UI never manufactures balances, candidate setups, P/L, health, news,
 or research evidence. Strategy V1 remains DRAFT and there is no UI path to
 activate LIVE trading.
+
+## Visual analytics (Milestone 5.5)
+
+- The market chart renders responsive Lightweight Charts candlesticks, volume,
+  crosshair, timestamp scale, and current price from bounded persisted closed
+  candles only.
+- Shared chart transforms centralize closed-candle ordering, equity drawdown,
+  and actual-only cumulative R.
+- /markets presents real 15-minute charts for BTCUSDT and ETHUSDT, with
+  persisted price, volume, regime, score, volatility, and news context.
+- /performance renders actual-only equity, drawdown, cumulative R, and
+  per-trade R charts when outcomes exist. Empty states remain truthful when
+  there are no closed PAPER trades.

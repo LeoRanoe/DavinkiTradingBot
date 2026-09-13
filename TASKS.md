@@ -100,3 +100,11 @@ for the exact next action.
   readability. No fake trading, health, performance, or research data added.
 - [x] Strategy V1 remains DRAFT; LIVE remains disabled; no deployment work
   was performed.
+
+## Task A - Milestone 5.5: Visual analytics
+
+- [x] Added reusable closed-candle, drawdown, and actual-only cumulative-R
+  chart transforms with focused tests.
+- [x] Added persisted-candle BTCUSDT and ETHUSDT market charts with volume.
+- [x] Added actual-only equity, drawdown, cumulative-R, and per-trade-R
+  performance charts. No mock chart fallback is used.
