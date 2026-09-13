@@ -1,6 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/server";
 import { getVaultSecret } from "./vault";
-import { getEnv } from "./env";
+import { getOptionalEnv } from "./env";
 
 export type IntegrationSource = "vault" | "env" | "none";
 
@@ -29,13 +29,22 @@ const DEFAULT_QWEN_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mo
 const DEFAULT_QWEN_MODEL = "qwen-turbo";
 
 async function getIntegrationRow(integration: string) {
-  const admin = createAdminClient();
-  const { data } = await admin
-    .from("integration_credentials")
-    .select("config, vault_secret_name")
-    .eq("integration", integration)
-    .maybeSingle();
-  return data;
+  try {
+    const admin = createAdminClient();
+    const { data } = await admin
+      .from("integration_credentials")
+      .select("config, vault_secret_name")
+      .eq("integration", integration)
+      .maybeSingle();
+    return data;
+  } catch {
+    // Supabase itself may not be fully configured yet (e.g. SUPABASE_SECRET_KEY
+    // missing), or the lookup may fail for other reasons. Either way, a
+    // dashboard-managed override is just unavailable - fall through to the
+    // environment-variable fallback rather than crashing the whole
+    // configuration resolution (spec: integrations must degrade gracefully).
+    return null;
+  }
 }
 
 /**
@@ -56,7 +65,7 @@ export async function getQwenConfiguration(): Promise<QwenConfiguration | null> 
     };
   }
 
-  const env = getEnv();
+  const env = getOptionalEnv();
   if (env.QWEN_API_KEY) {
     return {
       apiKey: env.QWEN_API_KEY,
@@ -84,7 +93,7 @@ export async function getTelegramConfiguration(): Promise<TelegramConfiguration 
     };
   }
 
-  const env = getEnv();
+  const env = getOptionalEnv();
   if (env.TELEGRAM_BOT_TOKEN && env.TELEGRAM_OWNER_USER_ID && env.TELEGRAM_CHAT_ID) {
     return {
       botToken: env.TELEGRAM_BOT_TOKEN,
@@ -108,7 +117,7 @@ export async function getBybitDemoConfiguration(): Promise<BybitDemoConfiguratio
     if (apiSecret) return { apiKey: vaultKey, apiSecret, source: "vault" };
   }
 
-  const env = getEnv();
+  const env = getOptionalEnv();
   if (env.BYBIT_DEMO_API_KEY && env.BYBIT_DEMO_API_SECRET) {
     return { apiKey: env.BYBIT_DEMO_API_KEY, apiSecret: env.BYBIT_DEMO_API_SECRET, source: "env" };
   }

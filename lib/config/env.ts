@@ -18,17 +18,25 @@ const coreSchema = z.object({
   SUPABASE_SECRET_KEY: z.string().min(1),
 });
 
+// Env vars left blank (e.g. `QWEN_BASE_URL=` in .env.local, or an empty
+// Vercel env var) arrive as an empty string, not undefined. Without this,
+// `.optional()` would NOT treat "" as absent and `.url()`/`.min(1)` would
+// reject it, throwing out of getEnv() for a var that is simply unset.
+const blankToUndefined = (val: unknown) => (val === "" ? undefined : val);
+const optionalString = () => z.preprocess(blankToUndefined, z.string().min(1).optional());
+const optionalUrl = () => z.preprocess(blankToUndefined, z.string().url().optional());
+
 const optionalSchema = z.object({
-  CRON_SECRET: z.string().min(16).optional(),
-  QWEN_API_KEY: z.string().min(1).optional(),
-  QWEN_BASE_URL: z.string().url().optional(),
-  QWEN_MODEL: z.string().min(1).optional(),
-  TELEGRAM_BOT_TOKEN: z.string().min(1).optional(),
-  TELEGRAM_OWNER_USER_ID: z.string().min(1).optional(),
-  TELEGRAM_CHAT_ID: z.string().min(1).optional(),
-  TELEGRAM_WEBHOOK_SECRET: z.string().min(1).optional(),
-  BYBIT_DEMO_API_KEY: z.string().min(1).optional(),
-  BYBIT_DEMO_API_SECRET: z.string().min(1).optional(),
+  CRON_SECRET: z.preprocess(blankToUndefined, z.string().min(16).optional()),
+  QWEN_API_KEY: optionalString(),
+  QWEN_BASE_URL: optionalUrl(),
+  QWEN_MODEL: optionalString(),
+  TELEGRAM_BOT_TOKEN: optionalString(),
+  TELEGRAM_OWNER_USER_ID: optionalString(),
+  TELEGRAM_CHAT_ID: optionalString(),
+  TELEGRAM_WEBHOOK_SECRET: optionalString(),
+  BYBIT_DEMO_API_KEY: optionalString(),
+  BYBIT_DEMO_API_SECRET: optionalString(),
 });
 
 const fullSchema = coreSchema.merge(optionalSchema);
@@ -56,6 +64,17 @@ export function getEnv(): Env {
   const full = fullSchema.parse(process.env);
   cached = full;
   return full;
+}
+
+/**
+ * Optional-integration env vars only - deliberately independent of the
+ * Supabase core schema. Qwen/Telegram/Bybit Demo env fallback must work
+ * even when SUPABASE_SECRET_KEY is missing/invalid; only Supabase-backed
+ * (Vault) overrides need a working Supabase connection, and those already
+ * fail closed to this fallback via getIntegrationRow()'s try/catch.
+ */
+export function getOptionalEnv() {
+  return optionalSchema.parse(process.env);
 }
 
 /** Non-throwing variant for diagnostics / system status pages. */
