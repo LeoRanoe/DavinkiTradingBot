@@ -103,6 +103,7 @@ export function makePendingSignal(overrides: Partial<SignalRow> = {}): SignalRow
     processed_at: null,
     news_risk: null,
     news_snapshot: null,
+    decision_snapshot: null,
     ...overrides,
   };
 }
@@ -214,6 +215,12 @@ export function createFakeApprovalStore(db: FakeDb): ApprovalStore {
         exit_price: null,
         exit_reason: null,
         equity_after: null,
+        equity_before: null,
+        gross_pnl: null,
+        mfe_price: null,
+        mae_price: null,
+        mfe_r: null,
+        mae_r: null,
         pnl: null,
         r_multiple: null,
         rejection_reason: null,
@@ -262,6 +269,12 @@ export function createFakePositionStore(db: FakeDb, initialEquity = 1000): Posit
       trade.fees = args.totalFees;
       trade.slippage = args.realizedSlippage;
       trade.equity_after = args.equityAfter;
+      trade.equity_before = args.equityBefore;
+      trade.gross_pnl = args.grossPnl;
+      trade.mfe_price = args.mfePrice;
+      trade.mae_price = args.maePrice;
+      trade.mfe_r = args.mfeR;
+      trade.mae_r = args.maeR;
       trade.closed_at = args.closedAtIso;
       return true;
     },

@@ -7,8 +7,10 @@ after every milestone.
 ## MILESTONE_1_COMPLETE = true
 ## MILESTONE_2_COMPLETE = true
 ## MILESTONE_3_COMPLETE = true
+## MILESTONE_4_COMPLETE = true
 ## AUTOMATED_TRADING_CORE_READY = true
 ## INTELLIGENCE_LAYER_READY = true
+## LEARNING_LAYER_READY = true
 
 Owner risk configuration, the complete trade-candidate pipeline, Telegram
 approval, PAPER execution and automatic position management are implemented,
@@ -17,23 +19,23 @@ is operational in PAPER + APPROVAL_REQUIRED, subject to the one owner
 decision recorded under "Caveat A" (Strategy v1 is still DRAFT by design).
 
 ## CURRENT_MILESTONE
-None in progress. Milestone 4 (Controlled learning) is next and has NOT been
-started.
+None in progress. Milestone 4 (Controlled learning) is integrated; Milestone 5
+has not started.
 
 ## LAST_COMPLETED_MILESTONE
-Milestone 3 — News Intelligence + Qwen context.
+Milestone 4 — Controlled learning + strategy research.
 
 ## CURRENT_BRANCH
-`claude/davinki-milestone-1-ekbi1k`
+`claude/davinki-milestone-4-integrated`
 
 ## LAST_GOOD_COMMIT
-The commit on this branch prefixed `feat(milestone-3):`. Earlier milestones
-are carried by `feat(risk):`, `feat(milestone-1):` and `feat(milestone-2):`.
+The Milestone 4 integration commit on this branch; it retains the Milestone 1
+through 3 ancestry and adds the controlled-learning layer.
 
 ## VERIFIED_BASELINE (after Milestone 3)
 
-- Local: typecheck clean, lint clean (the same 2 pre-existing warnings),
-  **254/254 tests passing**, production build passing.
+- Local Milestone 3 baseline: typecheck clean, lint clean (the same 2
+  pre-existing warnings), **257/257 tests passing**, production build passing.
 - Live Supabase: the Milestone 3 migration is applied. News persistence and
   RLS were exercised directly against the real schema inside a rolled-back
   transaction: the scanner principal can write events, the `event_hash`
@@ -366,6 +368,6 @@ Conventions to preserve in Milestone 4+:
 - Deployment of this branch has not happened yet (see Caveat B).
 
 ## REMAINING_TASK_A_WORK
-Milestone 4 (Controlled learning) -> Milestone 5 (Trading Command Center
-UI) -> Milestone 6 (staging -> production promotion with full manual
-verification).
+Milestone 4 is complete. The next scoped work is Milestone 5 (Trading Command
+Center UI), followed by Milestone 6 (staging -> production promotion with full
+manual verification). Neither has started in this integration branch.

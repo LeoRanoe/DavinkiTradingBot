@@ -120,3 +120,12 @@ Settlement is idempotent: the OPEN -> CLOSED transition is an atomic
 compare-and-set and the equity snapshot is written only by the caller that
 won it, so a repeated or overlapping scan cannot re-charge fees or
 double-count P/L.
+
+## Learning boundary (Milestone 4)
+
+MFE/MAE, factual reviews, and optional Qwen post-trade interpretations are
+recorded only after the actual PAPER settlement described above. They are
+observability and research outputs, never inputs to risk sizing, eligibility,
+approval revalidation, or execution. Counterfactual research is isolated from
+actual trades: a hypothetical outcome cannot change equity, balance, realized
+P/L, realized R, or a prior risk rejection.

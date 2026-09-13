@@ -33,13 +33,25 @@ export function createPositionStore(client: SupabaseClient<Database>): PositionS
           fees: args.totalFees,
           slippage: args.realizedSlippage,
           equity_after: args.equityAfter,
+          gross_pnl: args.grossPnl,
+          equity_before: args.equityBefore,
+          mfe_price: args.mfePrice,
+          mae_price: args.maePrice,
+          mfe_r: args.mfeR,
+          mae_r: args.maeR,
           closed_at: args.closedAtIso,
-        })
+        } as never)
         .eq("id", args.tradeId)
         .eq("status", "OPEN")
         .select("id")
         .maybeSingle();
       return Boolean(data);
+    },
+
+    async recordExcursions(tradeId, values) {
+      await client.from("trades").update({
+        mfe_price: values.mfePrice, mae_price: values.maePrice, mfe_r: values.mfeR, mae_r: values.maeR,
+      } as never).eq("id", tradeId).eq("status", "OPEN");
     },
 
     async insertTradeEvent(tradeId, eventType, payload) {

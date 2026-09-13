@@ -82,13 +82,16 @@ export async function getCandles(
   symbol: string,
   timeframe: "1H" | "15M",
   limit = 200,
+  endMs?: number,
 ): Promise<Candle[]> {
-  const raw = await bybitFetch("/v5/market/kline", {
+  const params: Record<string, string> = {
     category: "spot",
     symbol,
     interval: BYBIT_INTERVAL[timeframe],
     limit: String(limit),
-  });
+  };
+  if (endMs !== undefined) params.end = String(endMs);
+  const raw = await bybitFetch("/v5/market/kline", params);
 
   const parsed = bybitKlineResponseSchema.safeParse(raw);
   if (!parsed.success) {

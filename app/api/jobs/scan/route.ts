@@ -9,6 +9,7 @@ import { computeAccountState } from "@/lib/trading/account-state";
 import { manageOpenPositions } from "@/lib/trading/position-manager";
 import { createPositionStore, sweepStaleCandidates } from "@/lib/trading/position-store";
 import { bybitMarketData } from "@/lib/trading/execute";
+import { captureClosedTradeLearning } from "@/lib/learning/persistence";
 import { buildCandidateForScan } from "@/lib/candidates/from-settings";
 import { buildSignalRow } from "@/lib/candidates/persistence";
 import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
@@ -138,6 +139,12 @@ export async function POST(request: NextRequest) {
 
   for (const closed of positionOutcome.closed) {
     await sendTelegramMessage(formatTradeClosedMessage(closed, STRATEGY_V1_VERSION_LABEL)).catch(() => undefined);
+    // Settlement and the equity snapshot already committed. Learning is
+    // post-settlement and best-effort: a research/AI failure cannot undo an
+    // actual PAPER result or destabilize the scan.
+    await captureClosedTradeLearning(admin, closed).catch((error) => {
+      errors.push(`learning ${closed.tradeId}: ${(error as Error).message}`);
+    });
   }
 
   // Lapse unattended candidates and reconcile any claim that died mid-flight.

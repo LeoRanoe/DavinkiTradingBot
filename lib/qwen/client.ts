@@ -1,5 +1,5 @@
 import { getQwenConfiguration } from "@/lib/config/integrations";
-import { qwenSignalExplanationSchema, qwenTradeReviewSchema, type QwenSignalExplanation, type QwenTradeReview } from "./schemas";
+import { qwenSignalExplanationSchema, qwenTradeReviewSchema, qwenPostTradeReviewSchema, type QwenSignalExplanation, type QwenTradeReview, type QwenPostTradeReview } from "./schemas";
 import { qwenNewsAnalysisSchema, type QwenNewsAnalysis } from "./news-schema";
 
 export type QwenStatus = "AVAILABLE" | "NOT_CONFIGURED" | "UNAVAILABLE";
@@ -142,6 +142,16 @@ export async function reviewTrade(input: {
   const parsed = qwenTradeReviewSchema.safeParse(result.data);
   if (!parsed.success) return { status: "ERROR", message: "Provider returned malformed structured output" };
   return { status: "OK", data: parsed.data };
+}
+
+const POST_TRADE_REVIEW_SYSTEM_PROMPT = `You review deterministic, already-settled PAPER trade facts. Return only AI INTERPRETATION and HYPOTHESES; never claim a supplied fact as your own, change risk, change parameters, activate a strategy, or decide execution. Avoid hindsight. Respond as JSON: {"summary":string,"observations":string[],"hypotheses":string[],"confidence":number,"dataLimitations":string[]}.`;
+
+export async function reviewPostTrade(input: Record<string, unknown>): Promise<QwenResult<QwenPostTradeReview>> {
+  const result = await callQwen(POST_TRADE_REVIEW_SYSTEM_PROMPT, JSON.stringify(input));
+  if (result.status !== "OK") return result;
+  const parsed = qwenPostTradeReviewSchema.safeParse(result.data);
+  if (!parsed.success) return { status: "ERROR", message: "Provider returned malformed structured output", usage: result.usage };
+  return { status: "OK", data: parsed.data, usage: result.usage };
 }
 
 const NEWS_SYSTEM_PROMPT = `You analyse a single news item for a deterministic crypto trading system.

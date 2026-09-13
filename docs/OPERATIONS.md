@@ -121,6 +121,14 @@ On `trades.status`: `OPEN -> CLOSED` (with `exit_reason` of `STOP`,
 ran. Settlement writes P/L, realized R, the fee split, realized slippage,
 `equity_after`, and one `portfolio_snapshots` row.
 
+## Learning after settlement
+
+Only after the atomic settlement and equity snapshot succeed, the learning
+layer records factual MFE/MAE and a factual trade review. Qwen review is
+best-effort and tracked through the existing AI usage accounting; it cannot
+roll back settlement. Owner-rejected and risk-blocked candidates are queued as
+explicitly hypothetical research and never affect equity or actual P/L.
+
 ## Idempotency - what actually guarantees it
 
 Application logic is never the guarantee. Three database facts are:

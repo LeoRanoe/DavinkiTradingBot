@@ -177,3 +177,20 @@
   handful of well-specified fields are needed from feeds we explicitly
   choose; a tightly scoped parser is easier to reason about and keeps the
   supply-chain surface out of the trading system.
+
+## Controlled learning (Milestone 4)
+
+- Actual PAPER outcomes are the sole source of realized P/L, realized R, and
+  equity. Learning is invoked only after the atomic settlement winner commits
+  those facts; a learning or AI failure cannot unwind settlement.
+- Counterfactual outcomes are research records for owner-rejected or
+  risk-blocked candidates. They are explicitly hypothetical and cannot change
+  equity, account balance, risk settings, approval results, or activation.
+- Each candidate's immutable decision snapshot includes the exact Milestone 3
+  news context available at generation time. Historical analysis consumes that
+  stored context rather than current news.
+- Strategy experiments are immutable and use chronological
+  development/validation/holdout splits plus walk-forward support. Statistics
+  below the evidence threshold are labelled insufficient, not actionable.
+- Qwen post-trade output is a cached interpretation with limitations and
+  hypotheses, never a trade-review authority or a second AI client.

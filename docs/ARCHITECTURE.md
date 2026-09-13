@@ -24,7 +24,10 @@
    accounts for every AI request in tokens.
 10. **Notifications** (`lib/telegram/`) - webhook + outbound messages; approvals
    re-run the full risk engine, they are never execution authority by themselves.
-11. **UI** (`app/`, `components/`) - Next.js App Router, Server Components by
+11. **Learning research** (`lib/learning/`) - records immutable decision and
+    outcome evidence after settlement; performs counterfactual and experiment
+    research only. It cannot feed risk, sizing, approval, execution, or equity.
+12. **UI** (`app/`, `components/`) - Next.js App Router, Server Components by
     default, shadcn/ui + TanStack Table + Recharts + lightweight-charts.
 
 ## Data flow (scan cycle)
@@ -43,6 +46,18 @@ classification (assets, category, base risk) -> AI analysis ONLY for
 relevant, materially-capable events -> `news_events`. The scan job later
 attaches a read-only snapshot of the most relevant recent events to a
 candidate, and that snapshot is immutable thereafter.
+
+## Learning data flow (post-settlement only)
+The scanner's first phase settles an actual PAPER position through the
+Milestone 2 atomic transition. Only after realized P/L, realized R, equity,
+and trade state are authoritative does it persist MFE/MAE and a factual trade
+review. An optional post-trade Qwen interpretation uses the same structured,
+usage-accounted, graceful-failure client as news; it is never execution input.
+
+Rejected or risk-blocked signals may enter the separate
+`counterfactual_outcomes` queue. They retain the immutable candidate decision
+snapshot, including the Milestone 3 news snapshot and linked event IDs, but
+never update actual trades, account balance, equity, or actual P/L.
 
 ## Trading mode state machine
 OBSERVE -> PAPER -> DEMO -> (LIVE, permanently unreachable in this build).

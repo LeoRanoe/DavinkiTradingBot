@@ -6,6 +6,9 @@ Prepared at the end of Task A / Milestone 2, for the owner to decide whether
 **Recommendation: NOT YET. The evidence required to make this decision
 responsibly does not exist in the repository or the database today.**
 
+Milestone 4 adds outcome capture, evidence guards and research machinery, not
+evidence. V1 remains `DRAFT`; no recommendation can activate it automatically.
+
 This is a statement about missing evidence, not a claim that the strategy is
 bad. Nothing here was fabricated or estimated.
 

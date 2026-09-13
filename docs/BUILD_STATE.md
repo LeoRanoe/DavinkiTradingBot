@@ -125,6 +125,17 @@ Last updated: 2026-09-13
   written and ready, but scheduling it against the current production build
   would log a failed job every 15 minutes. See `docs/OPERATIONS.md`.
 
+## Task A — Milestone 4 (Controlled learning + strategy research) — COMPLETE
+
+- Integrates outcome capture into the current Milestone 2 atomic settlement path: actual P/L/equity settle first, then MFE/MAE and a factual review are persisted.
+- Counterfactual research is explicitly hypothetical and separate from portfolio truth. It may evaluate owner-rejected and risk-blocked candidates but never weakens deterministic risk.
+- Adds evidence guards, aggregate analytics, chronological development/validation/holdout primitives, walk-forward support, immutable experiment primitives, and a bounded research-only Bybit backfill.
+- Uses the current Qwen client, credential resolver, structured output, graceful degradation and AI usage accounting for optional post-trade interpretation.
+- Migration `00000000000007_learning_layer.sql` is additive, has been applied
+  to the connected Supabase project after the full application gate, and its
+  schema, RLS policies, constraints, scanner insert policy and no-LIVE
+  restrictions were verified. No application deployment was performed.
+
 ## Remaining hardening
 
 - Replace or remove the stale Vercel `SUPABASE_SECRET_KEY`. Owner Vault saves, dashboard PAPER writes, guest management, and scans no longer depend on it; the remaining dependency is Telegram callback execution and the manual Cron fallback. Milestone 2 narrowed that path to a small set of specific operations and made a missing/rotated key surface as a clear "server configuration error" acknowledgement with nothing executed, instead of a 500 that Telegram would retry indefinitely. Replacing the key with a narrowly-scoped capability (an inbound webhook has no user session to carry RLS) is still open.

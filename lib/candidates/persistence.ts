@@ -99,6 +99,21 @@ export function buildSignalRow(input: SignalRowInput): SignalInsertRow {
     expires_at: new Date(effectiveExpiryMs).toISOString(),
     news_risk: input.newsContext?.newsRisk ?? null,
     news_snapshot: (input.newsContext ?? null) as unknown as SignalInsertRow["news_snapshot"],
+    decision_snapshot: {
+      candidateId: candidate.candidateId,
+      signalId: candidate.signalId,
+      strategyVersion: candidate.strategyVersionLabel,
+      symbol: candidate.symbol, venue: candidate.venue, marketType: candidate.marketType, timeframe: candidate.timeframe,
+      signalCandleTimestamp: candidate.closedCandleTime, candidateCreatedAt: candidate.lifecycle.createdAt, candidateExpiry: candidate.lifecycle.expiresAt,
+      score: candidate.strategyScore, scoreComponents: candidate.scoreComponents, classification: candidate.classification,
+      indicatorSnapshot: candidate.indicators, regime: candidate.marketRegime, volatility: candidate.volatilityState,
+      plannedEntry: candidate.position.plannedEntry, allowedEntryRange: { min: candidate.position.minimumAllowedEntry, max: candidate.position.maximumAllowedEntry },
+      stop: candidate.position.stopPrice, target: candidate.position.targetPrice, stopDistance: candidate.position.plannedEntry - candidate.position.stopPrice,
+      plannedRiskReward: candidate.position.riskReward, plannedR: candidate.position.plannedR, risk: candidate.risk,
+      newsEventIds: input.newsContext?.events.map((event) => event.id) ?? [], newsRisk: input.newsContext?.newsRisk ?? "UNKNOWN", newsSnapshot: input.newsContext ?? null,
+      ownerAction: null, ownerDecisionTime: null, approvalDelay: null, finalCandidateState: candidate.lifecycle.state,
+      rejectionReason: null, executionMode: input.tradingMode,
+    } as never,
     planned_entry: candidate.position.plannedEntry,
     minimum_allowed_entry: candidate.position.minimumAllowedEntry,
     maximum_allowed_entry: candidate.position.maximumAllowedEntry,
@@ -110,7 +125,7 @@ export function buildSignalRow(input: SignalRowInput): SignalInsertRow {
     volatility_state: candidate.volatilityState,
     risk_snapshot: candidate.risk as unknown as Database["public"]["Tables"]["signals"]["Insert"]["risk_snapshot"],
     indicator_snapshot: candidate.indicators as unknown as Database["public"]["Tables"]["signals"]["Insert"]["indicator_snapshot"],
-  };
+  } as unknown as SignalInsertRow;
 }
 
 /**

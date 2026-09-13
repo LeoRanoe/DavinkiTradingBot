@@ -25,6 +25,16 @@ export const qwenTradeReviewSchema = z.object({
   lesson: z.string().min(1).max(400),
 });
 
+/** Optional post-settlement interpretation. It is never deterministic fact. */
+export const qwenPostTradeReviewSchema = z.object({
+  summary: z.string().min(1).max(400),
+  observations: z.array(z.string().min(1).max(400)).max(6),
+  hypotheses: z.array(z.string().min(1).max(400)).max(4),
+  confidence: z.number().min(0).max(1),
+  dataLimitations: z.array(z.string().min(1).max(300)).max(6),
+});
+
 export type QwenNote = z.infer<typeof qwenNoteSchema>;
 export type QwenSignalExplanation = z.infer<typeof qwenSignalExplanationSchema>;
 export type QwenTradeReview = z.infer<typeof qwenTradeReviewSchema>;
+export type QwenPostTradeReview = z.infer<typeof qwenPostTradeReviewSchema>;

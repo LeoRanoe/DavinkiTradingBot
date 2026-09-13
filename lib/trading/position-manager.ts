@@ -4,6 +4,7 @@ import { toCostModel, type OwnerRiskSettings } from "@/lib/settings/risk-setting
 import type { MarketDataPort } from "./approval";
 import { checkExit } from "./paper";
 import { computeSettlement } from "./settlement";
+import { calculateLongExcursions } from "@/lib/learning/outcomes";
 
 export type TradeRow = Database["public"]["Tables"]["trades"]["Row"];
 
@@ -21,6 +22,12 @@ export type ClosedPosition = {
   realizedSlippage: number;
   equityBefore: number;
   equityAfter: number;
+  openedAt?: string | null;
+  closedAt?: string;
+  mfePrice?: number;
+  maePrice?: number;
+  mfeR?: number | null;
+  maeR?: number | null;
 };
 
 export interface PositionStore {
@@ -36,11 +43,18 @@ export interface PositionStore {
     totalFees: number;
     realizedSlippage: number;
     equityAfter: number;
+    grossPnl: number;
+    equityBefore: number;
+    mfePrice: number;
+    maePrice: number;
+    mfeR: number | null;
+    maeR: number | null;
     closedAtIso: string;
   }): Promise<boolean>;
   insertTradeEvent(tradeId: string, eventType: string, payload: Record<string, unknown>): Promise<void>;
   latestEquity(mode: TradingMode): Promise<number>;
   insertPortfolioSnapshot(args: { mode: TradingMode; equity: number; takenAtIso: string }): Promise<void>;
+  recordExcursions?(tradeId: string, values: { mfePrice: number; maePrice: number; mfeR: number | null; maeR: number | null }): Promise<void>;
 }
 
 export type ManageResult = { closed: ClosedPosition[]; errors: string[] };
@@ -111,6 +125,14 @@ export async function manageOpenPositions(deps: {
       const openedAtMs = trade.opened_at ? new Date(trade.opened_at).getTime() : 0;
       // Only candles that closed AFTER the position opened can exit it.
       const relevant = closedCandles.filter((c) => c.openTime >= openedAtMs);
+      const prior = trade as TradeRow & { mfe_price?: number | null; mae_price?: number | null; mfe_r?: number | null; mae_r?: number | null };
+      if (relevant.length > 0) {
+        const rolling = calculateLongExcursions(trade.entry_price ?? 0, trade.stop_price ?? 0, relevant);
+        await deps.store.recordExcursions?.(trade.id, {
+          mfePrice: Math.max(rolling.mfePrice, prior.mfe_price ?? 0), maePrice: Math.max(rolling.maePrice, prior.mae_price ?? 0),
+          mfeR: Math.max(rolling.mfeR ?? 0, prior.mfe_r ?? 0), maeR: Math.max(rolling.maeR ?? 0, prior.mae_r ?? 0),
+        });
+      }
 
       for (const candle of relevant) {
         const check = checkExit(
@@ -142,6 +164,11 @@ export async function manageOpenPositions(deps: {
         const equityBefore = await deps.store.latestEquity("PAPER");
         const equityAfter = equityBefore + settlement.netPnl;
         const closedAtIso = new Date(candle.openTime + candleIntervalMs).toISOString();
+        const current = calculateLongExcursions(trade.entry_price ?? 0, trade.stop_price ?? 0, relevant.filter((bar) => bar.openTime <= candle.openTime));
+        const excursions = {
+          mfePrice: Math.max(current.mfePrice, prior.mfe_price ?? 0), maePrice: Math.max(current.maePrice, prior.mae_price ?? 0),
+          mfeR: Math.max(current.mfeR ?? 0, prior.mfe_r ?? 0), maeR: Math.max(current.maeR ?? 0, prior.mae_r ?? 0),
+        };
 
         const won = await deps.store.closeTrade({
           tradeId: trade.id,
@@ -154,6 +181,9 @@ export async function manageOpenPositions(deps: {
           realizedSlippage: settlement.realizedSlippage,
           equityAfter,
           closedAtIso,
+          grossPnl: settlement.grossPnl,
+          equityBefore,
+          ...excursions,
         });
 
         // Someone else already settled this position. Do NOT write an equity
@@ -191,6 +221,9 @@ export async function manageOpenPositions(deps: {
           realizedSlippage: settlement.realizedSlippage,
           equityBefore,
           equityAfter,
+          openedAt: trade.opened_at,
+          closedAt: closedAtIso,
+          ...excursions,
         });
 
         break; // one exit per position per run

@@ -75,3 +75,12 @@ verifiable once the branch is deployed.
 
 Next: Milestone 4 (Controlled learning). See `docs/ORCHESTRATION_STATE.md`
 for the exact next action.
+
+## Task A — Milestone 4: Controlled learning + strategy research
+
+- [x] Actual settlement now captures MFE/MAE, factual reviews, and optional Qwen interpretation after equity is authoritative.
+- [x] Rejected/risk-blocked candidates queue only explicit counterfactual research; account equity and actual P/L are isolated.
+- [x] Deterministic analytics, evidence thresholds, chronological experiments, walk-forward primitives, and research-only Bybit backfill are available.
+- [x] Strategy V1 remains `DRAFT`; LIVE remains disabled.
+- [x] Applied and verified `00000000000007_learning_layer.sql` after the full
+  integration gate; no application deployment was performed.
