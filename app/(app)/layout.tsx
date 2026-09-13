@@ -57,7 +57,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           email={user.email ?? "Signed in"}
           role={role}
         />
-        <main className="flex-1 space-y-6 p-4 md:p-6">{children}</main>
+        <main className="flex-1 p-4 md:p-6">
+          <div className="mx-auto w-full max-w-[1440px]">{children}</div>
+        </main>
       </div>
     </SidebarProvider>
   );

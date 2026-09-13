@@ -13,7 +13,7 @@ export function MetricCard({
   tone?: "neutral" | "positive" | "negative";
 }) {
   return (
-    <Card className="gap-2 py-4">
+    <Card className="gap-2 border-border/80 py-4 shadow-none">
       <CardHeader className="px-4">
         <CardTitle className="text-muted-foreground text-xs font-medium tracking-wide uppercase">
           {label}
@@ -22,7 +22,7 @@ export function MetricCard({
       <CardContent className="px-4">
         <div
           className={cn(
-            "font-mono text-2xl font-semibold tabular-nums",
+            "font-mono text-xl font-semibold tabular-nums sm:text-2xl",
             tone === "positive" && "text-positive",
             tone === "negative" && "text-negative",
           )}

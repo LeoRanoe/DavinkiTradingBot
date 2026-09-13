@@ -4,6 +4,10 @@ Last updated: 2026-09-13
 
 ## Current target
 
+- Milestone 5 command-center UI is complete on
+  `claude/davinki-milestone-4-integrated`; application deployment and
+  promotion remain Milestone 6 work.
+
 - Active repair branch: `dev`, created from historical source `claude/keen-darwin-bmjeav` at `69000da`; repaired history is also promoted to `staging` and `main`.
 - Supabase: `davinki-trading-bot` (`xvklitfcesprzbnfslks`), healthy, Postgres 17.
 - Production URL: `https://davinki-trading-bot.vercel.app`.

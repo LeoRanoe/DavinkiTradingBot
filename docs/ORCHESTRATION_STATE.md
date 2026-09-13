@@ -8,6 +8,7 @@ after every milestone.
 ## MILESTONE_2_COMPLETE = true
 ## MILESTONE_3_COMPLETE = true
 ## MILESTONE_4_COMPLETE = true
+## MILESTONE_5_COMPLETE = true
 ## AUTOMATED_TRADING_CORE_READY = true
 ## INTELLIGENCE_LAYER_READY = true
 ## LEARNING_LAYER_READY = true
@@ -19,18 +20,18 @@ is operational in PAPER + APPROVAL_REQUIRED, subject to the one owner
 decision recorded under "Caveat A" (Strategy v1 is still DRAFT by design).
 
 ## CURRENT_MILESTONE
-None in progress. Milestone 4 (Controlled learning) is integrated; Milestone 5
-has not started.
+None in progress. Milestone 5 (Trading Command Center UI) is complete.
+Milestone 6 has not started.
 
 ## LAST_COMPLETED_MILESTONE
-Milestone 4 — Controlled learning + strategy research.
+Milestone 5 - Production Trading Command Center UI.
 
 ## CURRENT_BRANCH
 `claude/davinki-milestone-4-integrated`
 
 ## LAST_GOOD_COMMIT
-The Milestone 4 integration commit on this branch; it retains the Milestone 1
-through 3 ancestry and adds the controlled-learning layer.
+The Milestone 5 command-center commit on this branch; it retains the
+Milestone 1 through 4 ancestry and adds UI only.
 
 ## VERIFIED_BASELINE (after Milestone 3)
 

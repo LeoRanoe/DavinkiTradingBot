@@ -33,7 +33,7 @@ export function DashboardHeader({
   }
 
   return (
-    <header className="bg-background/95 supports-[backdrop-filter]:bg-background/70 sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b px-4 backdrop-blur">
+    <header className="bg-background sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b px-4">
       <SidebarTrigger />
       <Separator orientation="vertical" className="h-5" />
       <div className="flex flex-1 items-center gap-3">

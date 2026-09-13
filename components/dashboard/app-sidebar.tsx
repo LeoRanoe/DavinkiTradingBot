@@ -7,6 +7,7 @@ import {
   LineChart,
   Radar,
   Receipt,
+  CircleDot,
   BarChart3,
   FlaskConical,
   GitBranch,
@@ -34,6 +35,8 @@ import {
 const NAV_ITEMS = [
   { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Markets", url: "/markets", icon: LineChart },
+  { title: "Candidates", url: "/candidates", icon: CircleDot },
+  { title: "Positions", url: "/positions", icon: Activity },
   { title: "Signals", url: "/signals", icon: Radar },
   { title: "Trades", url: "/trades", icon: Receipt },
   { title: "Performance", url: "/performance", icon: BarChart3 },
@@ -56,13 +59,13 @@ export function AppSidebar({ role }: { role: "owner" | "guest" }) {
             D
           </div>
           <span className="text-sm font-semibold tracking-tight group-data-[collapsible=icon]:hidden">
-            Davinki Coach
+            Davinki Trading
           </span>
         </div>
       </SidebarHeader>
-      <SidebarContent>
+      <SidebarContent className="pt-2">
         <SidebarGroup>
-          <SidebarGroupLabel>Trading</SidebarGroupLabel>
+          <SidebarGroupLabel>Operations</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
               {NAV_ITEMS.map((item) => (
@@ -82,6 +85,7 @@ export function AppSidebar({ role }: { role: "owner" | "guest" }) {
         </SidebarGroup>
       </SidebarContent>
       {role === "owner" ? <SidebarFooter>
+        <SidebarGroupLabel className="px-2">Controls</SidebarGroupLabel>
         <SidebarMenu>
           <SidebarMenuItem>
             <SidebarMenuButton

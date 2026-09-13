@@ -84,3 +84,19 @@ for the exact next action.
 - [x] Strategy V1 remains `DRAFT`; LIVE remains disabled.
 - [x] Applied and verified `00000000000007_learning_layer.sql` after the full
   integration gate; no application deployment was performed.
+
+## Task A - Milestone 5: Trading Command Center UI
+
+- [x] Reworked the authenticated shell as **Davinki Trading** with compact,
+  responsive terminal navigation, semantic status language, and corrected
+  Geist font tokens.
+- [x] Rebuilt /dashboard around persisted operating state, risk, current
+  action, market/news context, activity, learning evidence, and the DRAFT
+  strategy gate.
+- [x] Added first-class /candidates and /positions surfaces, including
+  responsive candidate filters/cards, owner-only existing decision actions,
+  PAPER position state, pending approvals, and closed outcomes.
+- [x] Refined /signals and /trades for dense desktop use and mobile
+  readability. No fake trading, health, performance, or research data added.
+- [x] Strategy V1 remains DRAFT; LIVE remains disabled; no deployment work
+  was performed.

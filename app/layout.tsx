@@ -16,8 +16,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Davinki Trading Coach",
-  description: "Autonomous AI-assisted crypto trading coach and research platform.",
+  title: "Davinki Trading",
+  description: "Personal trading operations, research, and PAPER execution console.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

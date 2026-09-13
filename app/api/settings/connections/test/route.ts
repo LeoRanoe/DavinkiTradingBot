@@ -19,7 +19,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(result);
   }
   if (integration === "telegram") {
-    const result = await sendTelegramMessage("Test message from Davinki Trading Coach settings.");
+    const result = await sendTelegramMessage("Test message from Davinki Trading settings.");
     return NextResponse.json(result);
   }
   return NextResponse.json({ error: "Unknown integration" }, { status: 400 });

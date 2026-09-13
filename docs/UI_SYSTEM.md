@@ -36,6 +36,29 @@ Factual, non-promotional (spec #84/85): "Candidate setup," "No valid setup,"
 enthusiastic marketing copy. No sparkle icons, no robot imagery, no fake
 confidence gauges.
 
-## Status
-UI build starts in Phase 9. This document will be extended with concrete
-component names (`MetricCard`, `SetupScore`, etc.) as they're implemented.
+## Command center implementation (Milestone 5)
+
+- **Davinki Trading** is the product name in the application shell and page
+  metadata. Geist Sans is the interface font and Geist Mono is reserved for
+  prices, P/L, timestamps, quantities, and other tabular data.
+- The terminal uses compact neutral surfaces, one restrained blue information
+  accent, and semantic positive/negative/warning states. Dark mode is the
+  default, while both token sets maintain the same hierarchy.
+- The shared shell consists of AppSidebar, DashboardHeader, ModeBadge,
+  SystemStatusBadge, MetricCard, and EmptyState. It stays server-first; only
+  small table filtering and decision controls are client components.
+- /dashboard is the operations overview: status strip, account/risk metrics,
+  current action, $50 growth-experiment context, market state, news context,
+  activity, learning evidence, and the V1 DRAFT gate.
+- /candidates is the qualified-setup workspace, with state filters, text
+  filtering, compact desktop table, mobile cards, review links, and existing
+  owner-only approval/rejection actions. /signals remains the broader
+  closed-candle evaluation history.
+- /positions separates open PAPER positions, pending approvals, and recent
+  closures. /trades is responsive history with fees, R, exit reason, and
+  mobile summaries.
+
+All metrics, timelines, statuses, and empty states are backed by persisted
+data. The UI never manufactures balances, candidate setups, P/L, health, news,
+or research evidence. Strategy V1 remains DRAFT and there is no UI path to
+activate LIVE trading.

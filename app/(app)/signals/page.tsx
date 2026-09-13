@@ -3,6 +3,8 @@ import { SignalsTable } from "@/components/tables/signals-table";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { Radar } from "lucide-react";
 import { getUserRole } from "@/lib/auth/authorization";
+import Link from "next/link";
+import { Button } from "@/components/ui/button";
 
 export default async function SignalsPage() {
   const supabase = await createClient();
@@ -15,11 +17,14 @@ export default async function SignalsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Signals</h1>
-        <p className="text-muted-foreground text-sm">
-          Every candle Strategy V1 scored LOG or above. IGNORE-level candles are not stored, to avoid noise.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Signals</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Every closed candle Strategy V1 scored LOG or above. Candidate setups have their own operational view.
+          </p>
+        </div>
+        <Button variant="outline" render={<Link href="/candidates">Open candidates</Link>} />
       </div>
       {signals && signals.length > 0 ? (
         <SignalsTable data={signals} canManage={user ? getUserRole(user) === "owner" : false} />
