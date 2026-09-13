@@ -1,8 +1,12 @@
 import { getQwenConfiguration, getTelegramConfiguration, getBybitDemoConfiguration } from "@/lib/config/integrations";
 import { ConnectionCard } from "@/components/dashboard/connection-card";
+import { TradingModeCard } from "@/components/dashboard/trading-mode-card";
+import { createClient } from "@/lib/supabase/server";
 
 export default async function ConnectionsPage() {
-  const [qwen, telegram, demo] = await Promise.all([
+  const supabase = await createClient();
+  const [{ data: settings }, qwen, telegram, demo] = await Promise.all([
+    supabase.from("system_settings").select("trading_mode").eq("id", true).single(),
     getQwenConfiguration(),
     getTelegramConfiguration(),
     getBybitDemoConfiguration(),
@@ -11,12 +15,14 @@ export default async function ConnectionsPage() {
   return (
     <div className="max-w-2xl space-y-6">
       <div>
-        <h1 className="text-lg font-semibold">Connections</h1>
+        <h1 className="text-lg font-semibold">Settings</h1>
         <p className="text-muted-foreground text-sm">
-          Replace integration credentials without redeploying. Existing secrets are never shown - only a new value
-          can be entered.
+          Trading mode and integration credentials. Credentials can be replaced without redeploying - existing
+          secrets are never shown, only a new value can be entered.
         </p>
       </div>
+
+      <TradingModeCard currentMode={settings?.trading_mode ?? "OBSERVE"} />
 
       <ConnectionCard
         integration="qwen"
