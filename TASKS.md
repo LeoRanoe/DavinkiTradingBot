@@ -108,3 +108,30 @@ for the exact next action.
 - [x] Added persisted-candle BTCUSDT and ETHUSDT market charts with volume.
 - [x] Added actual-only equity, drawdown, cumulative-R, and per-trade-R
   performance charts. No mock chart fallback is used.
+
+## Task A - Milestone 6: Automatic PAPER research window
+
+- [x] Added a persisted, server-authoritative research window
+  (`paper_research_sessions`) that lets a DRAFT strategy execute in PAPER for
+  a bounded period without implying it is validated or profitable.
+- [x] Centralized strategy eligibility in `isStrategyEligibleForPaper()`,
+  used by BOTH the scanner and the executor so they cannot disagree. LIVE is
+  refused first and unconditionally.
+- [x] Made AUTO operational through the EXISTING execution engine.
+  `executeCandidate()` routes TELEGRAM, DASHBOARD and AUTO into the same
+  `approveCandidate()`; AUTO changes who may authorize execution, never what
+  is checked.
+- [x] AUTO stops by itself: `effectiveExecutionPolicy()` refuses AUTO once
+  the window elapses, on time alone, independently of any write having
+  happened. The scanner additionally reconciles the stored state and sends
+  exactly one completion notification.
+- [x] Automatic trades record `decision_source = AUTO` with `owner_decision`
+  left null, and are tagged to the research session so the period can be
+  analyzed on its own without mixing in other history.
+- [x] Added the research evidence report. It can only ever recommend KEEP
+  DRAFT or OWNER REVIEW FOR PAPER APPROVAL, and gates that on sample size
+  rather than on how good the numbers look.
+- [x] Updated settings, dashboard and system diagnostics to show the
+  EFFECTIVE execution policy and the research day, and never to display a
+  DRAFT strategy as PAPER_APPROVED.
+- [x] 270 -> 334 tests. Strategy V1 remains DRAFT; LIVE remains disabled.

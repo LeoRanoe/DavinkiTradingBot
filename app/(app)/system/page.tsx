@@ -3,6 +3,13 @@ import { getQwenConfiguration, getTelegramConfiguration, getBybitDemoConfigurati
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SystemStatusBadge, type SystemHealthLevel } from "@/components/dashboard/system-status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Badge } from "@/components/ui/badge";
+import { loadCurrentResearchWindow } from "@/lib/research/store";
+import { loadResearchFunnel, loadResearchTrades } from "@/lib/research/evidence";
+import { effectiveExecutionPolicy } from "@/lib/research/policy";
+import { formatTimeRemaining, researchProgress, researchWindowState } from "@/lib/research/window";
+import { evidenceLevel } from "@/lib/learning/analytics";
+import { riskSettingsFromRow } from "@/lib/settings/risk-settings";
 
 function Row({ label, level, detail }: { label: string; level: SystemHealthLevel; detail: string }) {
   return (
@@ -38,6 +45,31 @@ export default async function SystemPage() {
         .order("created_at", { ascending: false })
         .limit(50),
     ]);
+
+  // Research diagnostics. Reported from persisted state only - an unreadable
+  // window is shown as NOT CONFIGURED rather than assumed healthy.
+  const researchWindow = await loadCurrentResearchWindow(supabase).catch(() => null);
+  const { data: settingsRow } = await supabase.from("system_settings").select("*").eq("id", true).maybeSingle();
+  const researchSettings = riskSettingsFromRow(settingsRow);
+  // Server Component: evaluated once per request, deliberately - diagnostics
+  // must report the window's state now, not a cached one.
+  // eslint-disable-next-line react-hooks/purity
+  const researchNow = Date.now();
+  const researchState = researchWindowState(researchWindow, researchNow);
+  const researchPolicy = effectiveExecutionPolicy({
+    configuredPolicy: researchSettings.executionPolicy,
+    tradingMode: researchSettings.tradingMode,
+    researchWindow,
+    now: researchNow,
+  });
+  const researchProgressView = researchWindow ? researchProgress(researchWindow, researchNow) : null;
+  const researchTrades = researchWindow
+    ? await loadResearchTrades(supabase, researchWindow.id).catch(() => [])
+    : [];
+  const researchFunnel = researchWindow
+    ? await loadResearchFunnel(supabase, researchWindow.id).catch(() => null)
+    : null;
+  const researchClosed = researchTrades.filter((t) => t.closedAt !== null).length;
 
   const lastRun = jobRuns?.[0];
   // Server Component: this value is intentionally evaluated once per request
@@ -89,6 +121,74 @@ export default async function SystemPage() {
         <h1 className="text-lg font-semibold">System</h1>
         <p className="text-muted-foreground text-sm">Operational status of every integration. No secrets are ever shown here.</p>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">Paper research</CardTitle>
+            <Badge variant={researchState === "ACTIVE" ? "default" : "secondary"}>
+              {researchState === "ACTIVE"
+                ? "ACTIVE"
+                : researchState === "NOT_CONFIGURED"
+                  ? "NOT CONFIGURED"
+                  : researchState}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
+            <div>
+              <dt className="text-muted-foreground text-xs">Execution policy (in force)</dt>
+              <dd className="font-medium">{researchPolicy.policy}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Execution policy (configured)</dt>
+              <dd className="font-medium">{researchSettings.executionPolicy}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Trading mode</dt>
+              <dd className="font-medium">{researchSettings.tradingMode}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Research start</dt>
+              <dd className="font-mono text-xs">{researchWindow?.startedAt ?? "-"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Research end</dt>
+              <dd className="font-mono text-xs">{researchWindow?.endsAt ?? "-"}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Time remaining</dt>
+              <dd className="font-medium">
+                {researchState === "ACTIVE" && researchProgressView
+                  ? `${formatTimeRemaining(researchProgressView.msRemaining)} (day ${researchProgressView.day} of ${researchProgressView.totalDays})`
+                  : "-"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Candidates / risk-valid</dt>
+              <dd className="font-medium">
+                {researchFunnel ? `${researchFunnel.candidates} / ${researchFunnel.riskValidCandidates}` : "-"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Trades collected (closed)</dt>
+              <dd className="font-medium">
+                {researchWindow ? `${researchTrades.length} (${researchClosed})` : "-"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground text-xs">Evidence level</dt>
+              <dd className="font-medium">{evidenceLevel(researchClosed)}</dd>
+            </div>
+          </dl>
+          {researchPolicy.degraded ? (
+            <p className="mt-4 text-sm text-amber-600 dark:text-amber-500">{researchPolicy.reason}</p>
+          ) : (
+            <p className="text-muted-foreground mt-4 text-xs">{researchPolicy.reason}</p>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

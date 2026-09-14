@@ -149,3 +149,28 @@ Last updated: 2026-09-13
 - Send a fresh Telegram test message and verify the webhook callback end to end. This could NOT be done from the development session: the bot token lives only in Vercel environment variables (there is no `telegram` row in `integration_credentials`), and the Milestone 2 code is not deployed yet. The Telegram formatting, callback parsing and authorization logic are unit-tested (13 tests), but a real button press remains unverified.
 - Exercise one naturally occurring production paper candidate through entry and exit; the deterministic path is currently test-verified only.
 - Supabase leaked-password protection is still disabled at the project level.
+
+## Task A — Milestone 6 (Automatic PAPER research window) — COMPLETE
+
+- Separates STRATEGY VALIDATION STATUS from TEMPORARY PAPER RESEARCH
+  ELIGIBILITY. `strategy_versions.status` answers "has this strategy earned a
+  promotion?"; a research window answers "is the owner collecting evidence
+  right now?". A window never promotes a strategy, and DRAFT becomes
+  non-executable again the moment the window ends.
+- `lib/research/window.ts` never trusts a stored ACTIVE status past `ends_at`:
+  expiry is a function of real time, so a missed or delayed scan cannot keep
+  automatic execution alive past day 14. A 30-day ceiling is enforced both in
+  TypeScript and by a database CHECK constraint.
+- AUTO reuses the existing execution engine rather than adding a second one.
+  Every source passes through the same atomic claim, fresh ticker, fresh ATR,
+  entry range, expiry, risk sizing, exchange metadata, available balance,
+  daily limits, loss lock, open-position limit, min-order risk conflict and
+  duplicate protection.
+- Migration `20260914090000_paper_research_window.sql` is additive and has
+  been applied to the connected Supabase project. Two constraints are WIDENED,
+  never narrowed: `decision_source` gains AUTO, and the scanner gains INSERT
+  on `trades` restricted to `trading_mode = 'PAPER'`. That second change was
+  required: only the owner principal could previously insert a trade, so AUTO
+  would have failed at its final step. Every LIVE prohibition is untouched.
+- Gate: 334 tests, typecheck clean, production build clean, lint unchanged at
+  the same 2 pre-existing warnings.

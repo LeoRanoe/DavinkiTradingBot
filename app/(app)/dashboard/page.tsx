@@ -11,6 +11,10 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { STRATEGY_V1_PARAMS } from "@/lib/strategy/v1/config";
 import { calculatePerformance } from "@/lib/learning/analytics";
+import { loadCurrentResearchWindow } from "@/lib/research/store";
+import { effectiveExecutionPolicy } from "@/lib/research/policy";
+import { formatResearchDay, researchWindowState } from "@/lib/research/window";
+import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
 
 const money = (value: number) => "$" + value.toFixed(2);
 const timeLabel = (iso: string | null) => iso ? new Date(iso).toLocaleString() : "Not recorded";
@@ -23,7 +27,7 @@ function scannerHealth(status: string | undefined): SystemHealthLevel {
 
 export default async function DashboardPage() {
   const supabase = await createClient();
-  const [{ data: settings }, { data: snapshots }, { data: openTrades }, { data: pendingSignals }, { data: recentSignals }, { data: candles }, { data: lastJob }, { data: recentEvents }, { data: latestNews }, { data: closedTrades }] = await Promise.all([
+  const [{ data: settings }, { data: snapshots }, { data: openTrades }, { data: pendingSignals }, { data: recentSignals }, { data: candles }, { data: lastJob }, { data: recentEvents }, { data: latestNews }, { data: closedTrades }, { data: strategyVersion }] = await Promise.all([
     supabase.from("system_settings").select("*").eq("id", true).single(),
     supabase.from("portfolio_snapshots").select("equity, taken_at").eq("trading_mode", "PAPER").order("taken_at", { ascending: true }).limit(500),
     supabase.from("trades").select("*").eq("status", "OPEN").order("opened_at", { ascending: false }).limit(1),
@@ -34,10 +38,32 @@ export default async function DashboardPage() {
     supabase.from("audit_events").select("id, action, created_at, metadata").order("created_at", { ascending: false }).limit(8),
     supabase.from("news_events").select("id, headline, news_risk, published_at").order("published_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("trades").select("*").eq("status", "CLOSED").order("closed_at", { ascending: false }).limit(500),
+    // Read, never assumed: the badge must show the real status, so a DRAFT
+    // strategy in a research window is never displayed as PAPER_APPROVED.
+    supabase.from("strategy_versions").select("version_label, status").eq("version_label", "v1").maybeSingle(),
   ]);
 
-  const startingEquity = 10;
-  const targetEquity = 50;
+  // The research session, when one exists, is the authority on what this
+  // experiment started from and what it is aiming at - so the dashboard can
+  // never quietly rebase a run onto a different starting point.
+  const researchWindow = await loadCurrentResearchWindow(supabase);
+  // Server Component: evaluated once per request. The research window's
+  // state is a function of real time, so this is read here rather than
+  // memoized - a stale value would misreport whether AUTO is in force.
+  // eslint-disable-next-line react-hooks/purity
+  const now = Date.now();
+  const windowState = researchWindowState(researchWindow, now);
+  const researchActive = windowState === "ACTIVE";
+  const parsedSettings = riskSettingsFromRow(settings);
+  const effectivePolicy = effectiveExecutionPolicy({
+    configuredPolicy: parsedSettings.executionPolicy,
+    tradingMode: parsedSettings.tradingMode,
+    researchWindow,
+    now,
+  });
+
+  const startingEquity = researchWindow?.startingEquity ?? INITIAL_PAPER_EQUITY;
+  const targetEquity = researchWindow?.targetEquity ?? 50;
   const equity = snapshots?.at(-1)?.equity ?? startingEquity;
   const peakEquity = Math.max(startingEquity, ...(snapshots ?? []).map((snapshot) => snapshot.equity));
   const drawdown = peakEquity > 0 ? ((equity - peakEquity) / peakEquity) * 100 : 0;
@@ -61,7 +87,7 @@ export default async function DashboardPage() {
     <div className="space-y-6">
       <section className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
         <div><h1 className="text-2xl font-semibold tracking-tight">Trading command center</h1><p className="mt-1 text-sm text-muted-foreground">Current operating state, real PAPER activity, and evidence-backed research.</p></div>
-        <div className="flex flex-wrap items-center gap-2"><ModeBadge mode={settings?.trading_mode ?? "OBSERVE"} /><Badge variant="outline">{settings?.execution_policy ?? "APPROVAL_REQUIRED"}</Badge><Badge variant="outline">Strategy V1: DRAFT</Badge><SystemStatusBadge level={health} label={"Scanner: " + (lastJob?.status ?? "UNKNOWN")} /></div>
+        <div className="flex flex-wrap items-center gap-2"><ModeBadge mode={settings?.trading_mode ?? "OBSERVE"} /><Badge variant="outline">{effectivePolicy.policy === "AUTO" ? "AUTO" : "APPROVAL REQUIRED"}</Badge>{researchActive && researchWindow ? <Badge variant="default">PAPER RESEARCH - {formatResearchDay(researchWindow, now)}</Badge> : null}<Badge variant="outline">Strategy {strategyVersion?.version_label ?? "V1"}: {strategyVersion?.status ?? "DRAFT"}{researchActive ? " / Research" : ""}</Badge><SystemStatusBadge level={health} label={"Scanner: " + (lastJob?.status ?? "UNKNOWN")} /></div>
       </section>
 
       <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -76,11 +102,11 @@ export default async function DashboardPage() {
         <Card className="border-border/80 xl:col-span-2">
           <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><CircleDot className="size-4 text-info" />Current action</CardTitle></CardHeader>
           <CardContent>
-            {openTrade ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className="text-lg font-semibold">{openTrade.symbol}</span><Badge variant="outline">{openTrade.trading_mode} OPEN</Badge></div><p className="mt-1 text-sm text-muted-foreground">Managed on every scan. Stop and target remain the current exit boundaries.</p><div className="mt-4 grid grid-cols-3 gap-4 text-sm"><div><span className="text-muted-foreground">Entry</span><p className="font-mono tabular-nums">{openTrade.entry_price === null ? "-" : money(openTrade.entry_price)}</p></div><div><span className="text-muted-foreground">Stop</span><p className="font-mono tabular-nums">{openTrade.stop_price === null ? "-" : money(openTrade.stop_price)}</p></div><div><span className="text-muted-foreground">Target</span><p className="font-mono tabular-nums">{openTrade.target_price === null ? "-" : money(openTrade.target_price)}</p></div></div></div><Button variant="outline" render={<Link href="/positions">View position</Link>} /></div> : pendingCandidate ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className="text-lg font-semibold">{pendingCandidate.symbol} candidate</span><SetupScore score={pendingCandidate.score} classification={pendingCandidate.classification} /></div><p className="mt-1 text-sm text-muted-foreground">Awaiting an explicit owner decision. Approval will re-run all deterministic checks against fresh market data.</p><p className="mt-3 font-mono text-sm tabular-nums">Entry {pendingCandidate.planned_entry === null ? "-" : money(pendingCandidate.planned_entry)} / Stop {pendingCandidate.stop_price === null ? "-" : money(pendingCandidate.stop_price)} / Target {pendingCandidate.target_price === null ? "-" : money(pendingCandidate.target_price)}</p></div><Button variant="outline" render={<Link href={"/signals/" + pendingCandidate.id}>Review candidate</Link>} /></div> : <EmptyState icon={ShieldCheck} title="No actionable setup right now" description={latestRejection?.rejection_reason ? "Latest evaluated setup was blocked: " + latestRejection.rejection_reason.replaceAll("_", " ") + "." : "Strategy V1 is DRAFT. The scanner will continue recording deterministic results without opening a trade."} />}
+            {openTrade ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className="text-lg font-semibold">{openTrade.symbol}</span><Badge variant="outline">{openTrade.trading_mode} OPEN</Badge></div><p className="mt-1 text-sm text-muted-foreground">Managed on every scan. Stop and target remain the current exit boundaries.</p><div className="mt-4 grid grid-cols-3 gap-4 text-sm"><div><span className="text-muted-foreground">Entry</span><p className="font-mono tabular-nums">{openTrade.entry_price === null ? "-" : money(openTrade.entry_price)}</p></div><div><span className="text-muted-foreground">Stop</span><p className="font-mono tabular-nums">{openTrade.stop_price === null ? "-" : money(openTrade.stop_price)}</p></div><div><span className="text-muted-foreground">Target</span><p className="font-mono tabular-nums">{openTrade.target_price === null ? "-" : money(openTrade.target_price)}</p></div></div></div><Button variant="outline" render={<Link href="/positions">View position</Link>} /></div> : pendingCandidate ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className="text-lg font-semibold">{pendingCandidate.symbol} candidate</span><SetupScore score={pendingCandidate.score} classification={pendingCandidate.classification} /></div><p className="mt-1 text-sm text-muted-foreground">Awaiting an explicit owner decision. Approval will re-run all deterministic checks against fresh market data.</p><p className="mt-3 font-mono text-sm tabular-nums">Entry {pendingCandidate.planned_entry === null ? "-" : money(pendingCandidate.planned_entry)} / Stop {pendingCandidate.stop_price === null ? "-" : money(pendingCandidate.stop_price)} / Target {pendingCandidate.target_price === null ? "-" : money(pendingCandidate.target_price)}</p></div><Button variant="outline" render={<Link href={"/signals/" + pendingCandidate.id}>Review candidate</Link>} /></div> : <EmptyState icon={ShieldCheck} title="No actionable setup right now" description={latestRejection?.rejection_reason ? "Latest evaluated setup was blocked: " + latestRejection.rejection_reason.replaceAll("_", " ") + "." : researchActive ? "No setup currently qualifies. The scanner keeps evaluating every closed candle; no trade is a valid outcome." : "Strategy V1 is DRAFT. The scanner will continue recording deterministic results without opening a trade."} />}
           </CardContent>
         </Card>
         <Card className="border-border/80">
-          <CardHeader className="pb-3"><CardTitle className="text-base">Growth experiment</CardTitle><CardDescription>Recorded PAPER equity toward a $50.00 research target. This is not a forecast.</CardDescription></CardHeader>
+          <CardHeader className="pb-3"><CardTitle className="text-base">Growth experiment</CardTitle><CardDescription>Recorded PAPER equity toward a {money(targetEquity)} research target. Informational only - it never changes risk or filtering, and it is not a forecast.</CardDescription></CardHeader>
           <CardContent className="space-y-3"><div className="font-mono text-3xl font-semibold tabular-nums">{progress.toFixed(0)}%</div><div className="grid grid-cols-2 gap-3 text-sm"><div><span className="text-muted-foreground">Current</span><p className="font-mono tabular-nums">{money(equity)}</p></div><div><span className="text-muted-foreground">Remaining</span><p className="font-mono tabular-nums">{money(Math.max(0, targetEquity - equity))}</p></div></div><p className="text-xs text-muted-foreground">Risk settings are not changed by progress.</p></CardContent>
         </Card>
       </section>
@@ -95,7 +121,7 @@ export default async function DashboardPage() {
         <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><GraduationCap className="size-4 text-info" />Learning evidence</CardTitle></CardHeader><CardContent className="space-y-3"><Badge variant="outline">{performance.evidenceLevel}</Badge><div className="grid grid-cols-2 gap-3 text-sm"><div><span className="text-muted-foreground">Closed outcomes</span><p className="font-mono text-lg tabular-nums">{performance.sampleCount}</p></div><div><span className="text-muted-foreground">Expectancy</span><p className="font-mono text-lg tabular-nums">{performance.expectancyR === null ? "-" : performance.expectancyR.toFixed(2) + "R"}</p></div></div><p className="text-xs text-muted-foreground">{performance.sampleCount < 20 ? "Evidence is insufficient for profitability claims below 20 completed outcomes." : "Initial evidence threshold reached. Research still requires validation and holdout review."}</p><Button size="sm" variant="ghost" render={<Link href="/learn">Open learning <ArrowUpRight /></Link>} /></CardContent></Card>
       </section>
 
-      <section className="rounded-lg border bg-muted/20 p-4 sm:flex sm:items-center sm:justify-between"><div><div className="flex items-center gap-2 font-medium"><FlaskConical className="size-4 text-warning" />Strategy V1 remains DRAFT</div><p className="mt-1 text-sm text-muted-foreground">Research evidence is not sufficient for PAPER approval. No activation control is available here.</p></div><Button className="mt-3 sm:mt-0" variant="outline" render={<Link href="/strategies">Review strategy readiness</Link>} /></section>
+      <section className="rounded-lg border bg-muted/20 p-4 sm:flex sm:items-center sm:justify-between"><div><div className="flex items-center gap-2 font-medium"><FlaskConical className="size-4 text-warning" />Strategy {strategyVersion?.version_label ?? "V1"} remains {strategyVersion?.status ?? "DRAFT"}</div><p className="mt-1 text-sm text-muted-foreground">{researchActive ? "It is executing in PAPER under a time-bounded research window. That is evidence collection only - it does not mean the strategy is validated or profitable, and execution stops when the window ends." : "Research evidence is not sufficient for PAPER approval. No activation control is available here."}</p></div><Button className="mt-3 sm:mt-0" variant="outline" render={<Link href="/strategies">Review strategy readiness</Link>} /></section>
     </div>
   );
 }

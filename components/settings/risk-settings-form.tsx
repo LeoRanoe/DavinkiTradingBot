@@ -339,7 +339,7 @@ export function RiskSettingsForm({ settings }: { settings: OwnerRiskSettings }) 
             step="0.5"
           />
           <div className="space-y-2 sm:col-span-2">
-            <Label htmlFor="executionPolicy">Execution policy</Label>
+            <Label htmlFor="executionPolicy">Execution mode</Label>
             <Select
               value={form.executionPolicy}
               onValueChange={(value) => set("executionPolicy", value as FormState["executionPolicy"])}
@@ -349,16 +349,24 @@ export function RiskSettingsForm({ settings }: { settings: OwnerRiskSettings }) 
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="APPROVAL_REQUIRED">Approval required</SelectItem>
-                <SelectItem value="AUTO">Automatic (PAPER/DEMO only)</SelectItem>
+                <SelectItem value="AUTO">Fully automated</SelectItem>
+                <SelectItem value="APPROVAL_REQUIRED">Ask for approval</SelectItem>
               </SelectContent>
             </Select>
-            <p className="text-muted-foreground text-sm">
-              Approval required is the current behavior: a candidate is only ever a recommendation until you
-              approve it, and approval re-runs every check against fresh market data. Automatic is a
-              PAPER/DEMO-only future capability - it can never apply to real money, which stays disabled in
-              this build at the database, risk-engine, and UI layers alike.
-            </p>
+            {form.executionPolicy === "AUTO" ? (
+              <p className="text-muted-foreground text-sm">
+                Automatic mode uses the same deterministic risk and revalidation rules. It does not bypass
+                trade safety checks. Automatic execution additionally requires PAPER mode and an active
+                research window - it stops on its own when that window ends, and it can never apply to real
+                money, which stays disabled at the database, risk-engine and UI layers alike.
+              </p>
+            ) : (
+              <p className="text-muted-foreground text-sm">
+                Qualified candidates are sent to Telegram for approval. A candidate is only ever a
+                recommendation until you approve it, and approving re-runs every check against fresh market
+                data before anything opens.
+              </p>
+            )}
           </div>
         </CardContent>
       </Card>
