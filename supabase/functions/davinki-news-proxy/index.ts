@@ -8,10 +8,52 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
  * Vercel still never needs a Supabase service-role credential. Only the
  * upstream path differs.
  *
- * NOT YET SCHEDULED. Activating the cron entry before the application code
- * that serves /api/jobs/news is deployed would just log a failed job every
- * 15 minutes - see docs/OPERATIONS.md for the activation steps.
+ * Scheduled every 15 minutes as davinki_news_15m. News failure never blocks
+ * PAPER execution - the scanner treats missing news as UNKNOWN context.
  */
+/**
+ * The two credential hops below call the project's OWN PostgREST and Auth
+ * endpoints, and both were observed returning intermittent 504s - roughly
+ * 70% of ingestion cycles were lost to a transient gateway timeout on one of
+ * them, with ingestion never running at all.
+ *
+ * Retrying these two hops is safe because both are pure reads: looking up a
+ * secret and exchanging it for a token have no side effects, so a repeat
+ * costs nothing and cannot double-execute anything. The upstream news call
+ * is deliberately NOT retried here - it is the side-effecting one, and
+ * leaving it single-shot keeps two ingestion runs from ever overlapping.
+ */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit,
+  attempts = 3,
+): Promise<Response> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt > 0) {
+      // 400ms, then 1200ms. Short enough to stay well inside the caller's
+      // 60s budget, long enough for a brief gateway blip to clear.
+      await new Promise((resolve) => setTimeout(resolve, attempt === 1 ? 400 : 1200));
+    }
+
+    try {
+      const response = await fetch(url, init);
+      // Only a server-side failure is worth retrying. A 4xx is a real
+      // answer - misconfigured credentials, say - and repeating it would
+      // just delay a correct error.
+      if (response.status < 500) return response;
+      lastError = new Error(`upstream responded ${response.status}`);
+      if (attempt === attempts - 1) return response;
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) throw error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("request failed");
+}
+
 Deno.serve(async (request: Request) => {
   try {
     if (request.method !== "POST") {
@@ -25,7 +67,7 @@ Deno.serve(async (request: Request) => {
       return Response.json({ error: "Automatic Supabase environment is unavailable" }, { status: 500 });
     }
 
-    const secretResponse = await fetch(`${supabaseUrl}/rest/v1/rpc/get_davinki_scanner_credentials`, {
+    const secretResponse = await fetchWithRetry(`${supabaseUrl}/rest/v1/rpc/get_davinki_scanner_credentials`, {
       method: "POST",
       headers: {
         apikey: serviceRoleKey,
@@ -50,7 +92,7 @@ Deno.serve(async (request: Request) => {
       return Response.json({ error: "Scanner credentials are not configured" }, { status: 500 });
     }
 
-    const tokenResponse = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    const tokenResponse = await fetchWithRetry(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
       method: "POST",
       headers: { apikey: anonKey, "content-type": "application/json" },
       body: JSON.stringify(credentials),
@@ -66,6 +108,7 @@ Deno.serve(async (request: Request) => {
       return Response.json({ error: "Scanner token was not issued" }, { status: 502 });
     }
 
+    // Single-shot on purpose: this is the side-effecting call.
     const upstream = await fetch("https://davinki-trading-bot.vercel.app/api/jobs/news", {
       method: "POST",
       headers: {
