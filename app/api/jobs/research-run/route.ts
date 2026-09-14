@@ -3,22 +3,28 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createAdminClient, createBearerClient } from "@/lib/supabase/server";
 import type { Database } from "@/lib/supabase/database.types";
 import { riskSettingsFromRow } from "@/lib/settings/risk-settings";
-import { persistHypotheses, runHistoricalResearch } from "@/lib/research/run";
-import { summarizeHistoricalResearch } from "@/lib/research/hard-test-report";
+import {
+  persistStage,
+  prepareStageContext,
+  runStage,
+  RESEARCH_STAGES,
+  type ResearchStage,
+} from "@/lib/research/stages";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 300;
+export const maxDuration = 60;
 
 /**
- * The historical hostile-testing pass (spec sections F through N).
+ * One stage of the historical hostile-testing programme (spec F through N).
  *
  * READ-ONLY with respect to trading. It reads stored candles and the owner's
- * settings, runs the research suite in memory, and writes only research
- * hypotheses and a job_runs record. It cannot open, close or size a position,
- * and it never touches PAPER equity.
+ * settings, runs the research harness in memory, and writes only a job_runs
+ * record. It cannot open, close or size a position and never touches PAPER
+ * equity.
  *
- * Deliberately NOT scheduled: it is an owner-driven analysis, and running a
- * multi-minute sweep every five minutes would be pure waste.
+ * Staged because the full suite is several minutes of CPU and the available
+ * runtime is one minute. Call it once per stage; the report is assembled from
+ * the stored stages. Deliberately NOT scheduled - it is owner-driven analysis.
  */
 export async function POST(request: NextRequest) {
   const cronSecret = process.env.CRON_SECRET;
@@ -41,9 +47,16 @@ export async function POST(request: NextRequest) {
   }
 
   const body = await request.json().catch(() => ({}));
+  const stage = String(body?.stage ?? "BASELINE").toUpperCase() as ResearchStage;
+  if (!RESEARCH_STAGES.includes(stage)) {
+    return NextResponse.json(
+      { error: `Unknown stage. Expected one of ${RESEARCH_STAGES.join(", ")}.` },
+      { status: 400 },
+    );
+  }
+
   const equity = Number.isFinite(body?.equity) ? Number(body.equity) : 1000;
   const maxCandles = Number.isFinite(body?.maxCandles) ? Number(body.maxCandles) : undefined;
-  const persist = body?.persistHypotheses !== false;
 
   const { data: jobRun } = await admin
     .from("job_runs")
@@ -55,34 +68,30 @@ export async function POST(request: NextRequest) {
     const { data: settingsRow } = await admin.from("system_settings").select("*").eq("id", true).single();
     const settings = riskSettingsFromRow(settingsRow);
 
-    const result = await runHistoricalResearch(admin, settings, { equity, maxCandles });
-    const summary = summarizeHistoricalResearch(result);
+    const context = await prepareStageContext(admin, settings, { equity, maxCandles });
+    const result = runStage(stage, context);
+    await persistStage(admin, result, jobRun?.id);
 
-    const hypotheses = persist ? await persistHypotheses(admin, result).catch(() => 0) : 0;
-
-    if (jobRun) {
-      await admin
-        .from("job_runs")
-        .update({
-          status: "SUCCEEDED",
-          completed_at: new Date().toISOString(),
-          records_processed: result.baseline.combined.sampleCount,
-          error_summary: result.warnings.join("; ") || null,
-          // The full result is large; the summary is what stays queryable.
-          metadata: { summary, coverage: result.coverage, hypotheses } as never,
-        })
-        .eq("id", jobRun.id);
-    }
-
-    return NextResponse.json({ status: "SUCCEEDED", summary, coverage: result.coverage, hypotheses, warnings: result.warnings });
+    return NextResponse.json({
+      status: "SUCCEEDED",
+      stage,
+      coverage: result.coverage,
+      warnings: result.warnings,
+      payload: result.payload,
+    });
   } catch (error) {
     const detail = (error as Error).message;
     if (jobRun) {
       await admin
         .from("job_runs")
-        .update({ status: "FAILED", completed_at: new Date().toISOString(), error_summary: detail.slice(0, 500) })
+        .update({
+          status: "FAILED",
+          completed_at: new Date().toISOString(),
+          error_summary: detail.slice(0, 500),
+          metadata: { stage } as never,
+        })
         .eq("id", jobRun.id);
     }
-    return NextResponse.json({ status: "FAILED", error: detail }, { status: 500 });
+    return NextResponse.json({ status: "FAILED", stage, error: detail }, { status: 500 });
   }
 }

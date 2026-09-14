@@ -104,6 +104,98 @@ export function summarizeHistoricalResearch(result: HistoricalResearchResult): H
   };
 }
 
+
+/**
+ * Assembles the historical summary from separately-executed stages.
+ *
+ * A missing stage is reported as missing rather than defaulted to something
+ * benign: an absent robustness run must never look like a passed one, so the
+ * gates that depend on it fail closed.
+ */
+export function historicalSummaryFromStages(
+  stages: Partial<Record<string, { payload: unknown; coverage: HistoricalSummary["coverage"] }>>,
+): HistoricalSummary | null {
+  const baseline = stages.BASELINE?.payload as
+    | {
+        combined: PerformanceMetrics;
+        perSymbol: Record<string, { metrics: PerformanceMetrics; trades: number }>;
+        splits: { development: PerformanceMetrics; validation: PerformanceMetrics; holdout: PerformanceMetrics } | null;
+        walkForward: { windows: number; unseen: PerformanceMetrics } | null;
+        scoreBands: { correlationNote: string; monotonic: boolean };
+        components: { hypotheses: string[] };
+        regimes: { concentrationWarning: string | null };
+        excursions: { observations: string[] };
+      }
+    | undefined;
+
+  if (!baseline) return null;
+
+  const robustness = stages.ROBUSTNESS?.payload as
+    | { stability: Record<string, { stableAcrossRange: boolean; suspectedOutlier: boolean; note: string }> }
+    | undefined;
+  const cost = stages.COST_STRESS?.payload as
+    | { survivesAll: boolean; outcomes: Array<{ label: string; metrics: PerformanceMetrics; survives: boolean }> }
+    | undefined;
+  const delay = stages.ENTRY_DELAY?.payload as
+    | { outcomes: Array<{ label: string; metrics: PerformanceMetrics; survives: boolean }> }
+    | undefined;
+  const stopTarget = stages.STOP_TARGET?.payload as
+    | Array<{ label: string; metrics: PerformanceMetrics; trades: number }>
+    | undefined;
+
+  const warnings: string[] = [];
+  if (!robustness) warnings.push("Parameter robustness stage has not been run.");
+  if (!cost) warnings.push("Cost stress stage has not been run.");
+  if (!delay) warnings.push("Entry delay stage has not been run.");
+  if (!stopTarget) warnings.push("Stop/target stage has not been run.");
+
+  return {
+    coverage: stages.BASELINE?.coverage ?? [],
+    baseline: baseline.combined,
+    perSymbol: baseline.perSymbol,
+    development: baseline.splits?.development ?? emptyMetrics(),
+    validation: baseline.splits?.validation ?? emptyMetrics(),
+    holdout: baseline.splits?.holdout ?? emptyMetrics(),
+    walkForwardUnseen: baseline.walkForward?.unseen ?? null,
+    walkForwardWindows: baseline.walkForward?.windows ?? 0,
+    scoreBandNote: baseline.scoreBands.correlationNote,
+    scoreBandMonotonic: baseline.scoreBands.monotonic,
+    stability: robustness?.stability ?? {},
+    // Absent means unproven, never proven. The gate fails closed.
+    costStressSurvivesAll: cost?.survivesAll ?? false,
+    costStress: (cost?.outcomes ?? []).map((o) => ({
+      label: o.label,
+      expectancyR: o.metrics.expectancyR,
+      survives: o.survives,
+    })),
+    entryDelay: (delay?.outcomes ?? []).map((o) => ({
+      label: o.label,
+      expectancyR: o.metrics.expectancyR,
+      survives: o.survives,
+    })),
+    stopTarget: (stopTarget ?? []).map((o) => ({
+      label: o.label,
+      expectancyR: o.metrics.expectancyR,
+      trades: o.trades,
+    })),
+    excursionObservations: baseline.excursions.observations,
+    componentHypotheses: baseline.components.hypotheses,
+    concentrationWarning: baseline.regimes.concentrationWarning,
+    warnings,
+  };
+}
+
+function emptyMetrics(): PerformanceMetrics {
+  return {
+    sampleCount: 0, wins: 0, losses: 0, breakeven: 0, winRate: null,
+    averageWin: null, averageLoss: null, averageR: null, medianR: null,
+    expectancyR: null, profitFactor: null, grossProfit: 0, grossLoss: 0,
+    netPnl: 0, fees: 0, slippage: 0, maxDrawdown: 0, maxLosingStreak: 0,
+    averageMfeR: null, averageMaeR: null, averageDurationMinutes: null,
+    evidenceLevel: "NO_DATA",
+  };
+}
+
 const MIN_ACTUAL_SAMPLE = 20;
 
 /**
