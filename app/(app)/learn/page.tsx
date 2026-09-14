@@ -20,15 +20,11 @@ export default async function LearnPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Learn</h1>
-        <p className="text-muted-foreground text-sm">Actual PAPER outcomes are distinct from rejected-candidate counterfactual research.</p>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Learn</h1>
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-sm font-medium">Actual performance</CardTitle><Badge variant="outline">{actualMetrics.evidenceLevel}</Badge></CardHeader>
+        <CardHeader className="flex flex-row items-center justify-between"><CardTitle className="text-sm font-medium">Actual PAPER performance</CardTitle><Badge variant="outline">{actualMetrics.evidenceLevel.replaceAll("_", " ")}</Badge></CardHeader>
         <CardContent className="grid gap-2 text-sm sm:grid-cols-4"><span>Closed: <strong>{actualMetrics.sampleCount}</strong></span><span>Expectancy: <strong>{actualMetrics.expectancyR === null ? "—" : `${actualMetrics.expectancyR.toFixed(2)}R`}</strong></span><span>Win rate: <strong>{actualMetrics.winRate === null ? "—" : `${(actualMetrics.winRate * 100).toFixed(0)}%`}</strong></span><span>Net P/L: <strong>${actualMetrics.netPnl.toFixed(2)}</strong></span></CardContent>
       </Card>
-      {actualMetrics.evidenceLevel !== "INITIAL_EVIDENCE" && <p className="rounded-md border p-3 text-sm text-muted-foreground">Insufficient evidence: no condition is described as profitable below 20 closed outcomes.</p>}
       {lessons && lessons.length > 0 ? (
         <div className="grid gap-3">
           {lessons.map((l) => (
@@ -44,11 +40,7 @@ export default async function LearnPage() {
           ))}
         </div>
       ) : (
-        <EmptyState
-          icon={GraduationCap}
-          title="No lessons yet"
-          description="Lessons are generated from real signals and trades - check back after the scanner has run a few times."
-        />
+        <EmptyState icon={GraduationCap} title="No lessons yet" />
       )}
     </div>
   );

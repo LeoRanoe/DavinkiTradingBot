@@ -8,10 +8,7 @@ export default async function StrategiesPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Strategies</h1>
-        <p className="text-muted-foreground text-sm">Immutable versions. A parameter change always ships as a new version.</p>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Strategies</h1>
       <div className="grid gap-4 md:grid-cols-2">
         {(strategies ?? []).map((s) => (
           <Card key={s.id}>

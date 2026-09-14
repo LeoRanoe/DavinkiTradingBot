@@ -54,6 +54,8 @@
   --color-warning-foreground: var(--warning-foreground);
   --color-info: var(--info);
   --color-info-foreground: var(--info-foreground);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
   --font-mono-tabular: var(--font-geist-mono);
 }
 
@@ -98,6 +100,8 @@
   --warning-foreground: oklch(0.2 0 0);
   --info: oklch(0.55 0.14 245);
   --info-foreground: oklch(0.99 0 0);
+  --brand: oklch(0.7 0.13 182);
+  --brand-foreground: oklch(0.145 0.02 182);
 }
 
 .dark {
@@ -140,6 +144,8 @@
   --warning-foreground: oklch(0.145 0 0);
   --info: oklch(0.72 0.14 245);
   --info-foreground: oklch(0.145 0.02 245);
+  --brand: oklch(0.78 0.13 182);
+  --brand-foreground: oklch(0.145 0.02 182);
 }
 
 @layer base {

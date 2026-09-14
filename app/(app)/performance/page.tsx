@@ -20,23 +20,15 @@ export default async function PerformancePage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Performance</h1>
-        <p className="text-muted-foreground text-sm">Based on closed PAPER trades.</p>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Performance</h1>
 
       {trades.length === 0 ? (
-        <EmptyState
-          icon={BarChart3}
-          title="No closed trades yet"
-          description="Performance analytics appear once at least one paper trade has closed."
-        />
+        <EmptyState icon={BarChart3} title="No result" />
       ) : (
         <>
           {insufficientSample ? (
             <p className="text-warning text-sm">
-              Only {trades.length} closed trade{trades.length === 1 ? "" : "s"} so far - too few to draw statistical
-              conclusions. Numbers below are shown for reference only.
+              {trades.length} closed trade{trades.length === 1 ? "" : "s"} - too few for statistical conclusions.
             </p>
           ) : null}
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

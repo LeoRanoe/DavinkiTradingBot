@@ -10,10 +10,7 @@ export default async function KnowledgePage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Knowledge</h1>
-        <p className="text-muted-foreground text-sm">Documents, lessons, strategy notes, and trade reviews.</p>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Knowledge</h1>
       {docs && docs.length > 0 ? (
         <div className="grid gap-3">
           {docs.map((d) => (
@@ -29,11 +26,7 @@ export default async function KnowledgePage() {
           ))}
         </div>
       ) : (
-        <EmptyState
-          icon={BookOpen}
-          title="No documents yet"
-          description="Trade reviews and research notes will populate this knowledge base as the system generates them."
-        />
+        <EmptyState icon={BookOpen} title="Nothing here yet" />
       )}
     </div>
   );

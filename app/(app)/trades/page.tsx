@@ -17,7 +17,7 @@ export default async function TradesPage() {
 
   return (
     <div className="space-y-5">
-      <div><h1 className="text-xl font-semibold tracking-tight">Trades</h1><p className="mt-1 text-sm text-muted-foreground">Historical PAPER execution. Results are simulated and never represent live-money performance.</p></div>
+      <h1 className="text-xl font-semibold tracking-tight">Trades</h1>
       {trades?.length ? (
         <>
           <div className="hidden overflow-x-auto rounded-lg border md:block">
@@ -28,7 +28,7 @@ export default async function TradesPage() {
           </div>
           <div className="grid gap-2 md:hidden">{trades.map((trade) => <div key={trade.id} className="rounded-lg border p-3"><div className="flex items-start justify-between gap-3"><div><div className="font-medium">{trade.symbol} <span className="text-muted-foreground">{trade.trading_mode}</span></div><div className="mt-1 text-xs text-muted-foreground">{new Date(trade.created_at).toLocaleString()} · {duration(trade.opened_at, trade.closed_at)}</div></div><Badge variant="outline">{trade.exit_reason ?? trade.status}</Badge></div><div className="mt-3 grid grid-cols-3 gap-2 text-sm"><div><span className="text-muted-foreground">Entry</span><p className="font-mono tabular-nums">{trade.entry_price === null ? "-" : "$" + Number(trade.entry_price).toFixed(2)}</p></div><div><span className="text-muted-foreground">Result</span><p className={"font-mono tabular-nums " + (trade.pnl === null ? "" : trade.pnl >= 0 ? "text-positive" : "text-negative")}>{money(trade.pnl)}</p></div><div><span className="text-muted-foreground">R</span><p className="font-mono tabular-nums">{trade.r_multiple === null ? "-" : Number(trade.r_multiple).toFixed(2) + "R"}</p></div></div></div>)}</div>
         </>
-      ) : <EmptyState icon={Receipt} title="No PAPER trades yet" description="Strategy V1 remains DRAFT. When evidence supports approval, completed PAPER positions will appear here." />}
+      ) : <EmptyState icon={Receipt} title="No trades yet" />}
     </div>
   );
 }

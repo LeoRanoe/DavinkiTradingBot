@@ -13,8 +13,8 @@ export default async function CandidatesPage() {
 
   return (
     <div className="space-y-5">
-      <div><h1 className="text-xl font-semibold tracking-tight">Candidates</h1><p className="mt-1 text-sm text-muted-foreground">Qualified Strategy V1 setups and their deterministic decision state.</p></div>
-      {candidates?.length ? <CandidatesTable data={candidates} canManage={user ? getUserRole(user) === "owner" : false} /> : <EmptyState icon={CircleDot} title="No candidate setups yet" description="The scanner records a candidate only when Strategy V1 and the risk engine both qualify a closed candle." />}
+      <h1 className="text-xl font-semibold tracking-tight">Candidates</h1>
+      {candidates?.length ? <CandidatesTable data={candidates} canManage={user ? getUserRole(user) === "owner" : false} /> : <EmptyState icon={CircleDot} title="No candidates yet" />}
     </div>
   );
 }

@@ -10,12 +10,7 @@ export default async function BacktestsPage() {
 
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-lg font-semibold">Backtests</h1>
-        <p className="text-muted-foreground text-sm">
-          Development / Validation / Holdout splits. Metrics reflect fees, slippage, and exchange minimums.
-        </p>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Backtests</h1>
       {backtests && backtests.length > 0 ? (
         <div className="overflow-x-auto rounded-md border">
           <Table>
@@ -46,11 +41,7 @@ export default async function BacktestsPage() {
           </Table>
         </div>
       ) : (
-        <EmptyState
-          icon={FlaskConical}
-          title="No backtests recorded yet"
-          description="Run the backtest engine (lib/backtest/) against historical data and persist results here to compare strategy versions."
-        />
+        <EmptyState icon={FlaskConical} title="No result" />
       )}
     </div>
   );

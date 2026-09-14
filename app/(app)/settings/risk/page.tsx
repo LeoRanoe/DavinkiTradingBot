@@ -55,13 +55,7 @@ export default async function RiskSettingsPage() {
 
   return (
     <div className="max-w-3xl space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold">Trading &amp; risk settings</h1>
-        <p className="text-muted-foreground text-sm">
-          Owner-only. These values drive every candidate the scanner produces: the risk budget, the position
-          size derived from it, which setups qualify at all, and how long a candidate stays executable.
-        </p>
-      </div>
+      <h1 className="text-xl font-semibold tracking-tight">Risk</h1>
 
       <ResearchWindowCard view={view} />
 

@@ -1,14 +1,12 @@
 import Link from "next/link";
-import { Activity, ArrowUpRight, CircleDot, FlaskConical, GraduationCap, Newspaper, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, Newspaper } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { SetupScore } from "@/components/dashboard/setup-score";
-import { ModeBadge } from "@/components/dashboard/mode-badge";
 import { SystemStatusBadge } from "@/components/dashboard/system-status-badge";
+import { Stat, TradingPair, Timestamp } from "@/components/dashboard/primitives";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { STRATEGY_V1_PARAMS } from "@/lib/strategy/v1/config";
 import { calculatePerformance } from "@/lib/learning/analytics";
 import { loadCurrentResearchWindow } from "@/lib/research/store";
@@ -18,7 +16,6 @@ import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-s
 import { scannerHealthLevel } from "@/lib/health/scanner";
 
 const money = (value: number) => "$" + value.toFixed(2);
-const timeLabel = (iso: string | null) => iso ? new Date(iso).toLocaleString() : "Not recorded";
 
 export default async function DashboardPage() {
   const supabase = await createClient();
@@ -91,7 +88,6 @@ export default async function DashboardPage() {
   }));
   const openTrade = openTrades?.[0];
   const pendingCandidate = pendingSignals?.[0];
-  const latestRejection = recentSignals?.find((signal) => signal.rejection_reason);
   const health = scannerHealthLevel(
     lastJob ? { status: lastJob.status, startedAt: lastJob.started_at } : null,
     now,
@@ -100,43 +96,146 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <section className="flex flex-col gap-4 border-b pb-5 lg:flex-row lg:items-end lg:justify-between">
-        <div><h1 className="text-2xl font-semibold tracking-tight">Trading command center</h1><p className="mt-1 text-sm text-muted-foreground">Current operating state, real PAPER activity, and evidence-backed research.</p></div>
-        <div className="flex flex-wrap items-center gap-2"><ModeBadge mode={settings?.trading_mode ?? "OBSERVE"} /><Badge variant="outline">{effectivePolicy.policy === "AUTO" ? "AUTO" : "APPROVAL REQUIRED"}</Badge>{researchActive && researchWindow ? <Badge variant="default">PAPER RESEARCH - {formatResearchDay(researchWindow, now)}</Badge> : null}<Badge variant="outline">Strategy {strategyVersion?.version_label ?? "V1"}: {strategyVersion?.status ?? "DRAFT"}{researchActive ? " / Research" : ""}</Badge><SystemStatusBadge level={health} label={"Scanner: " + (lastJob?.status ?? "UNKNOWN")} /></div>
+      <section className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-xl font-semibold tracking-tight">Dashboard</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="outline">{settings?.trading_mode ?? "OBSERVE"}</Badge>
+          <Badge variant="outline">{effectivePolicy.policy === "AUTO" ? "AUTO" : "APPROVAL"}</Badge>
+          <Badge variant="outline">{strategyVersion?.version_label ?? "V1"} {strategyVersion?.status ?? "DRAFT"}</Badge>
+          {researchActive && researchWindow ? (
+            <Badge variant="outline">Research · {formatResearchDay(researchWindow, now)}</Badge>
+          ) : null}
+          <SystemStatusBadge level={health} label={health === "HEALTHY" ? "Scanner online" : `Scanner ${health.toLowerCase()}`} />
+        </div>
       </section>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <MetricCard label="Paper equity" value={money(equity)} sublabel={"Started at " + money(startingEquity)} />
-        <MetricCard label="Today P/L" value={(todayPnl >= 0 ? "+" : "") + money(todayPnl)} tone={todayPnl > 0 ? "positive" : todayPnl < 0 ? "negative" : "neutral"} />
-        <MetricCard label="Total realized P/L" value={(totalPnl >= 0 ? "+" : "") + money(totalPnl)} tone={totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "neutral"} />
-        <MetricCard label="Current drawdown" value={drawdown.toFixed(1) + "%"} tone={drawdown < 0 ? "negative" : "neutral"} sublabel={"Peak " + money(peakEquity)} />
-        <MetricCard label="Risk in open positions" value={money(openRisk)} sublabel={"Per-trade setting " + (settings?.risk_mode === "FIXED_AMOUNT" ? money(settings.fixed_risk_amount ?? 0) : ((settings?.max_risk_per_trade_pct ?? 0) * 100).toFixed(1) + "%")} />
-      </section>
-
-      <section className="grid gap-4 xl:grid-cols-3">
-        <Card className="border-border/80 xl:col-span-2">
-          <CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><CircleDot className="size-4 text-info" />Current action</CardTitle></CardHeader>
-          <CardContent>
-            {openTrade ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className="text-lg font-semibold">{openTrade.symbol}</span><Badge variant="outline">{openTrade.trading_mode} OPEN</Badge></div><p className="mt-1 text-sm text-muted-foreground">Managed on every scan. Stop and target remain the current exit boundaries.</p><div className="mt-4 grid grid-cols-3 gap-4 text-sm"><div><span className="text-muted-foreground">Entry</span><p className="font-mono tabular-nums">{openTrade.entry_price === null ? "-" : money(openTrade.entry_price)}</p></div><div><span className="text-muted-foreground">Stop</span><p className="font-mono tabular-nums">{openTrade.stop_price === null ? "-" : money(openTrade.stop_price)}</p></div><div><span className="text-muted-foreground">Target</span><p className="font-mono tabular-nums">{openTrade.target_price === null ? "-" : money(openTrade.target_price)}</p></div></div></div><Button variant="outline" render={<Link href="/positions">View position</Link>} /></div> : pendingCandidate ? <div className="grid gap-4 sm:grid-cols-[1fr_auto] sm:items-center"><div><div className="flex flex-wrap items-center gap-2"><span className="text-lg font-semibold">{pendingCandidate.symbol} candidate</span><SetupScore score={pendingCandidate.score} classification={pendingCandidate.classification} /></div><p className="mt-1 text-sm text-muted-foreground">Awaiting an explicit owner decision. Approval will re-run all deterministic checks against fresh market data.</p><p className="mt-3 font-mono text-sm tabular-nums">Entry {pendingCandidate.planned_entry === null ? "-" : money(pendingCandidate.planned_entry)} / Stop {pendingCandidate.stop_price === null ? "-" : money(pendingCandidate.stop_price)} / Target {pendingCandidate.target_price === null ? "-" : money(pendingCandidate.target_price)}</p></div><Button variant="outline" render={<Link href={"/signals/" + pendingCandidate.id}>Review candidate</Link>} /></div> : <EmptyState icon={ShieldCheck} title="No actionable setup right now" description={latestRejection?.rejection_reason ? "Latest evaluated setup was blocked: " + latestRejection.rejection_reason.replaceAll("_", " ") + "." : researchActive ? "No setup currently qualifies. The scanner keeps evaluating every closed candle; no trade is a valid outcome." : "Strategy V1 is DRAFT. The scanner will continue recording deterministic results without opening a trade."} />}
-          </CardContent>
-        </Card>
-        <Card className="border-border/80">
-          <CardHeader className="pb-3"><CardTitle className="text-base">Growth experiment</CardTitle><CardDescription>Recorded PAPER equity toward a {money(targetEquity)} research target. Informational only - it never changes risk or filtering, and it is not a forecast.</CardDescription></CardHeader>
-          <CardContent className="space-y-3"><div className="font-mono text-3xl font-semibold tabular-nums">{progress.toFixed(0)}%</div><div className="grid grid-cols-2 gap-3 text-sm"><div><span className="text-muted-foreground">Current</span><p className="font-mono tabular-nums">{money(equity)}</p></div><div><span className="text-muted-foreground">Remaining</span><p className="font-mono tabular-nums">{money(Math.max(0, targetEquity - equity))}</p></div></div><p className="text-xs text-muted-foreground">Risk settings are not changed by progress.</p></CardContent>
-        </Card>
+      <section className="grid grid-cols-2 gap-x-6 gap-y-4 border-y py-4 sm:grid-cols-5">
+        <Stat label="Paper equity" value={money(equity)} sublabel={"from " + money(startingEquity)} />
+        <Stat label="Today" value={(todayPnl >= 0 ? "+" : "") + money(todayPnl)} tone={todayPnl > 0 ? "positive" : todayPnl < 0 ? "negative" : "neutral"} />
+        <Stat label="Total P/L" value={(totalPnl >= 0 ? "+" : "") + money(totalPnl)} tone={totalPnl > 0 ? "positive" : totalPnl < 0 ? "negative" : "neutral"} />
+        <Stat label="Drawdown" value={drawdown.toFixed(1) + "%"} tone={drawdown < 0 ? "negative" : "neutral"} sublabel={"peak " + money(peakEquity)} />
+        <Stat label="Open risk" value={money(openRisk)} />
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2"><CardHeader className="flex flex-row items-center justify-between pb-3"><CardTitle className="text-base">Market status</CardTitle><Button size="sm" variant="ghost" render={<Link href="/markets">Markets <ArrowUpRight /></Link>} /></CardHeader><CardContent className="grid gap-3 md:grid-cols-2">{latestBySymbol.map(({ symbol, signal, candle }) => <div key={symbol} className="rounded-lg border p-4"><div className="flex items-start justify-between gap-3"><div><div className="font-semibold">{symbol}</div><div className="mt-1 font-mono text-sm tabular-nums">{candle ? money(candle.close) : "No reference price"}</div></div>{signal ? <SetupScore score={signal.score} classification={signal.classification} /> : <Badge variant="outline">Awaiting scan</Badge>}</div>{signal ? <div className="mt-4 grid grid-cols-2 gap-3 text-xs"><div><span className="text-muted-foreground">Regime</span><p className="mt-1 truncate font-medium" title={signal.regime}>{signal.regime}</p></div><div><span className="text-muted-foreground">Volatility</span><p className="mt-1 font-medium">{signal.volatility_state ?? "UNKNOWN"}</p></div><div><span className="text-muted-foreground">News risk</span><p className="mt-1 font-medium">{signal.news_risk ?? "UNKNOWN"}</p></div><div><span className="text-muted-foreground">Updated</span><p className="mt-1 font-mono">{new Date(signal.candle_time).toLocaleTimeString()}</p></div></div> : <p className="mt-4 text-sm text-muted-foreground">No closed-candle analysis has been stored.</p>}</div>)}</CardContent></Card>
-        <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><Newspaper className="size-4 text-info" />News context</CardTitle></CardHeader><CardContent>{latestNews ? <div><Badge variant="outline">{latestNews.news_risk}</Badge><p className="mt-3 text-sm font-medium leading-5">{latestNews.headline}</p><p className="mt-2 text-xs text-muted-foreground">{timeLabel(latestNews.published_at)}. News remains context only.</p><Button className="mt-4" size="sm" variant="ghost" render={<Link href="/news">Open news <ArrowUpRight /></Link>} /></div> : <EmptyState icon={Newspaper} title="No news event stored" description="News ingestion is separate from trading and may be unavailable without affecting it." />}</CardContent></Card>
+        <div className="rounded-lg border p-4 xl:col-span-2">
+          <h2 className="text-sm font-medium">Current position</h2>
+          {openTrade ? (
+            <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <TradingPair symbol={openTrade.symbol} className="text-lg" />
+                <Badge variant="outline">LONG · OPEN</Badge>
+              </div>
+              <div className="grid grid-cols-3 gap-6 font-mono text-sm tabular-nums">
+                <div><span className="text-muted-foreground text-xs">Entry</span><p>{openTrade.entry_price === null ? "-" : money(openTrade.entry_price)}</p></div>
+                <div><span className="text-muted-foreground text-xs">Stop</span><p>{openTrade.stop_price === null ? "-" : money(openTrade.stop_price)}</p></div>
+                <div><span className="text-muted-foreground text-xs">Target</span><p>{openTrade.target_price === null ? "-" : money(openTrade.target_price)}</p></div>
+              </div>
+              <Button size="sm" variant="outline" render={<Link href="/positions">View</Link>} />
+            </div>
+          ) : pendingCandidate ? (
+            <div className="mt-3 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <TradingPair symbol={pendingCandidate.symbol} className="text-lg" />
+                <SetupScore score={pendingCandidate.score} classification={pendingCandidate.classification} />
+              </div>
+              <div className="font-mono text-sm tabular-nums text-muted-foreground">
+                {pendingCandidate.planned_entry === null ? "-" : money(pendingCandidate.planned_entry)} / {pendingCandidate.stop_price === null ? "-" : money(pendingCandidate.stop_price)} / {pendingCandidate.target_price === null ? "-" : money(pendingCandidate.target_price)}
+              </div>
+              <Button size="sm" variant="outline" render={<Link href={"/signals/" + pendingCandidate.id}>Review</Link>} />
+            </div>
+          ) : (
+            <p className="text-muted-foreground mt-3 text-sm">Waiting for setup</p>
+          )}
+        </div>
+        <div className="rounded-lg border p-4">
+          <h2 className="text-sm font-medium">Research target</h2>
+          <div className="mt-2 font-mono text-2xl font-semibold tabular-nums">{progress.toFixed(0)}%</div>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div><span className="text-muted-foreground text-xs">Current</span><p className="font-mono tabular-nums">{money(equity)}</p></div>
+            <div><span className="text-muted-foreground text-xs">Target</span><p className="font-mono tabular-nums">{money(targetEquity)}</p></div>
+          </div>
+        </div>
       </section>
 
       <section className="grid gap-4 xl:grid-cols-3">
-        <Card className="xl:col-span-2"><CardHeader className="flex flex-row items-center justify-between pb-3"><div><CardTitle className="text-base">Recent bot activity</CardTitle><CardDescription>Persisted operational events, newest first.</CardDescription></div><Button size="sm" variant="ghost" render={<Link href="/system">System <ArrowUpRight /></Link>} /></CardHeader><CardContent>{recentEvents?.length ? <div className="space-y-0">{recentEvents.map((event) => <div key={event.id} className="grid grid-cols-[10px_1fr_auto] items-center gap-3 border-b border-border/70 py-3 last:border-0"><span className="size-1.5 rounded-full bg-muted-foreground" aria-hidden /><div className="text-sm font-medium">{event.action.replaceAll("_", " ")}</div><div className="font-mono text-xs text-muted-foreground">{new Date(event.created_at).toLocaleString()}</div></div>)}</div> : <EmptyState icon={Activity} title="No activity has been recorded yet" description="Scans, decisions, trade events, and system changes will appear here once they occur." />}</CardContent></Card>
-        <Card><CardHeader className="pb-3"><CardTitle className="flex items-center gap-2 text-base"><GraduationCap className="size-4 text-info" />Learning evidence</CardTitle></CardHeader><CardContent className="space-y-3"><Badge variant="outline">{performance.evidenceLevel}</Badge><div className="grid grid-cols-2 gap-3 text-sm"><div><span className="text-muted-foreground">Closed outcomes</span><p className="font-mono text-lg tabular-nums">{performance.sampleCount}</p></div><div><span className="text-muted-foreground">Expectancy</span><p className="font-mono text-lg tabular-nums">{performance.expectancyR === null ? "-" : performance.expectancyR.toFixed(2) + "R"}</p></div></div><p className="text-xs text-muted-foreground">{performance.sampleCount < 20 ? "Evidence is insufficient for profitability claims below 20 completed outcomes." : "Initial evidence threshold reached. Research still requires validation and holdout review."}</p><Button size="sm" variant="ghost" render={<Link href="/learn">Open learning <ArrowUpRight /></Link>} /></CardContent></Card>
+        <div className="rounded-lg border p-4 xl:col-span-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium">Markets</h2>
+            <Button size="sm" variant="ghost" render={<Link href="/markets">All markets <ArrowUpRight /></Link>} />
+          </div>
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {latestBySymbol.map(({ symbol, signal, candle }) => (
+              <div key={symbol} className="rounded-md border p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <TradingPair symbol={symbol} />
+                    <div className="mt-0.5 font-mono text-sm tabular-nums">{candle ? money(candle.close) : "-"}</div>
+                  </div>
+                  {signal ? <SetupScore score={signal.score} classification={signal.classification} /> : <span className="text-muted-foreground text-xs">Awaiting scan</span>}
+                </div>
+                {signal ? (
+                  <div className="text-muted-foreground mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                    <span>{signal.regime}</span>
+                    <span>{signal.volatility_state ?? "-"} volatility</span>
+                    <span>{signal.news_risk ?? "-"} news</span>
+                    <Timestamp iso={signal.candle_time} />
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-lg border p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium">News</h2>
+            <Button size="sm" variant="ghost" render={<Link href="/news">All <ArrowUpRight /></Link>} />
+          </div>
+          {latestNews ? (
+            <div className="mt-3">
+              <div className="flex items-center gap-2">
+                <Badge variant="outline">{latestNews.news_risk}</Badge>
+                <Timestamp iso={latestNews.published_at} />
+              </div>
+              <p className="mt-2 text-sm leading-5">{latestNews.headline}</p>
+            </div>
+          ) : (
+            <EmptyState icon={Newspaper} title="No recent news" />
+          )}
+        </div>
       </section>
 
-      <section className="rounded-lg border bg-muted/20 p-4 sm:flex sm:items-center sm:justify-between"><div><div className="flex items-center gap-2 font-medium"><FlaskConical className="size-4 text-warning" />Strategy {strategyVersion?.version_label ?? "V1"} remains {strategyVersion?.status ?? "DRAFT"}</div><p className="mt-1 text-sm text-muted-foreground">{researchActive ? "It is executing in PAPER under a time-bounded research window. That is evidence collection only - it does not mean the strategy is validated or profitable, and execution stops when the window ends." : "Research evidence is not sufficient for PAPER approval. No activation control is available here."}</p></div><Button className="mt-3 sm:mt-0" variant="outline" render={<Link href="/strategies">Review strategy readiness</Link>} /></section>
+      <section className="grid gap-4 xl:grid-cols-3">
+        <div className="rounded-lg border p-4 xl:col-span-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium">Activity</h2>
+            <Button size="sm" variant="ghost" render={<Link href="/system">System <ArrowUpRight /></Link>} />
+          </div>
+          {recentEvents?.length ? (
+            <div className="mt-1">
+              {recentEvents.map((event) => (
+                <div key={event.id} className="flex items-center justify-between gap-3 border-b py-2.5 text-sm last:border-0">
+                  <span className="capitalize">{event.action.replaceAll("_", " ").toLowerCase()}</span>
+                  <Timestamp iso={event.created_at} />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-muted-foreground mt-3 text-sm">No activity yet</p>
+          )}
+        </div>
+        <div className="rounded-lg border p-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-medium">Learning evidence</h2>
+            <Badge variant="outline">{performance.evidenceLevel.replaceAll("_", " ")}</Badge>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+            <div><span className="text-muted-foreground text-xs">Closed</span><p className="font-mono text-lg tabular-nums">{performance.sampleCount}</p></div>
+            <div><span className="text-muted-foreground text-xs">Expectancy</span><p className="font-mono text-lg tabular-nums">{performance.expectancyR === null ? "-" : performance.expectancyR.toFixed(2) + "R"}</p></div>
+          </div>
+          <Button className="mt-2" size="sm" variant="ghost" render={<Link href="/learn">Open <ArrowUpRight /></Link>} />
+        </div>
+      </section>
     </div>
   );
 }

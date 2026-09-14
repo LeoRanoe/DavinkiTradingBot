@@ -264,8 +264,7 @@ export default async function SignalDetailPage({ params }: { params: Promise<{ i
 
       {isOwner(user) && signal.approval_status === "PENDING" && !isExpiredNow ? (
         <p className="text-muted-foreground text-sm">
-          This candidate is awaiting your decision. Approving re-runs every deterministic check against fresh
-          market data before a position opens - it never executes the stored proposal blindly.
+          Approving re-checks entry, stop, and target against current market data before opening a position.
         </p>
       ) : null}
     </div>

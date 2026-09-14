@@ -1,9 +1,9 @@
 import { createClient } from "@/lib/supabase/server";
 import { getQwenConfiguration, getTelegramConfiguration, getBybitDemoConfiguration } from "@/lib/config/integrations";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { SystemStatusBadge, type SystemHealthLevel } from "@/components/dashboard/system-status-badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { DataRow, Timestamp, relativeTimeShort } from "@/components/dashboard/primitives";
 import { loadCurrentResearchWindow } from "@/lib/research/store";
 import { loadResearchFunnel, loadResearchTrades } from "@/lib/research/evidence";
 import { effectiveExecutionPolicy } from "@/lib/research/policy";
@@ -12,14 +12,29 @@ import { evidenceLevel } from "@/lib/learning/analytics";
 import { riskSettingsFromRow } from "@/lib/settings/risk-settings";
 import { scannerHealthLevel } from "@/lib/health/scanner";
 
-function Row({ label, level, detail }: { label: string; level: SystemHealthLevel; detail: string }) {
+/** One integration row: status dot + label on the left, a short detail (only
+ * when relevant) on the right. Full diagnostic text appears only on error. */
+function StatusRow({
+  label,
+  level,
+  detail,
+  note,
+}: {
+  label: string;
+  level: SystemHealthLevel;
+  detail?: string;
+  note?: string;
+}) {
   return (
-    <div className="flex items-center justify-between border-b py-3 last:border-0">
-      <div>
-        <div className="text-sm font-medium">{label}</div>
-        <div className="text-muted-foreground text-xs">{detail}</div>
+    <div className="border-b py-2.5 last:border-0">
+      <div className="flex items-center justify-between text-sm">
+        <span>{label}</span>
+        <div className="flex items-center gap-2">
+          {detail ? <span className="text-muted-foreground text-xs">{detail}</span> : null}
+          <SystemStatusBadge level={level} />
+        </div>
       </div>
-      <SystemStatusBadge level={level} />
+      {note ? <p className="text-muted-foreground mt-1 text-xs">{note}</p> : null}
     </div>
   );
 }
@@ -113,183 +128,106 @@ export default async function SystemPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-lg font-semibold">System</h1>
-        <p className="text-muted-foreground text-sm">Operational status of every integration. No secrets are ever shown here.</p>
+      <h1 className="text-xl font-semibold tracking-tight">System</h1>
+
+      <div className="rounded-lg border p-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium">Research</h2>
+          <Badge variant={researchState === "ACTIVE" ? "default" : "secondary"}>
+            {researchState === "ACTIVE" ? "ACTIVE" : researchState === "NOT_CONFIGURED" ? "NOT CONFIGURED" : researchState}
+          </Badge>
+        </div>
+        <div className="mt-2 grid gap-x-6 sm:grid-cols-2 lg:grid-cols-3">
+          <DataRow label="Policy in force" value={researchPolicy.policy} />
+          <DataRow label="Policy configured" value={researchSettings.executionPolicy} />
+          <DataRow label="Trading mode" value={researchSettings.tradingMode} />
+          <DataRow
+            label="Time remaining"
+            value={
+              researchState === "ACTIVE" && researchProgressView
+                ? `${formatTimeRemaining(researchProgressView.msRemaining)} · day ${researchProgressView.day}/${researchProgressView.totalDays}`
+                : "-"
+            }
+          />
+          <DataRow label="Candidates / risk-valid" value={researchFunnel ? `${researchFunnel.candidates} / ${researchFunnel.riskValidCandidates}` : "-"} />
+          <DataRow label="Trades (closed)" value={researchWindow ? `${researchTrades.length} (${researchClosed})` : "-"} />
+          <DataRow label="Evidence" value={evidenceLevel(researchClosed).replaceAll("_", " ")} />
+        </div>
+        {researchPolicy.degraded ? <p className="text-warning mt-3 text-xs">{researchPolicy.reason}</p> : null}
       </div>
 
-      <Card>
-        <CardHeader>
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <CardTitle className="text-base">Paper research</CardTitle>
-            <Badge variant={researchState === "ACTIVE" ? "default" : "secondary"}>
-              {researchState === "ACTIVE"
-                ? "ACTIVE"
-                : researchState === "NOT_CONFIGURED"
-                  ? "NOT CONFIGURED"
-                  : researchState}
-            </Badge>
-          </div>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-3">
-            <div>
-              <dt className="text-muted-foreground text-xs">Execution policy (in force)</dt>
-              <dd className="font-medium">{researchPolicy.policy}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Execution policy (configured)</dt>
-              <dd className="font-medium">{researchSettings.executionPolicy}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Trading mode</dt>
-              <dd className="font-medium">{researchSettings.tradingMode}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Research start</dt>
-              <dd className="font-mono text-xs">{researchWindow?.startedAt ?? "-"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Research end</dt>
-              <dd className="font-mono text-xs">{researchWindow?.endsAt ?? "-"}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Time remaining</dt>
-              <dd className="font-medium">
-                {researchState === "ACTIVE" && researchProgressView
-                  ? `${formatTimeRemaining(researchProgressView.msRemaining)} (day ${researchProgressView.day} of ${researchProgressView.totalDays})`
-                  : "-"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Candidates / risk-valid</dt>
-              <dd className="font-medium">
-                {researchFunnel ? `${researchFunnel.candidates} / ${researchFunnel.riskValidCandidates}` : "-"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Trades collected (closed)</dt>
-              <dd className="font-medium">
-                {researchWindow ? `${researchTrades.length} (${researchClosed})` : "-"}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground text-xs">Evidence level</dt>
-              <dd className="font-medium">{evidenceLevel(researchClosed)}</dd>
-            </div>
-          </dl>
-          {researchPolicy.degraded ? (
-            <p className="mt-4 text-sm text-amber-600 dark:text-amber-500">{researchPolicy.reason}</p>
-          ) : (
-            <p className="text-muted-foreground mt-4 text-xs">{researchPolicy.reason}</p>
-          )}
-        </CardContent>
-      </Card>
+      <div className="rounded-lg border p-4">
+        <h2 className="mb-1 text-sm font-medium">Integrations</h2>
+        <StatusRow label="Supabase" level="HEALTHY" />
+        <StatusRow
+          label="Market scanner"
+          level={scannerLevel}
+          detail={lastRun ? relativeTimeShort(lastRun.started_at, scannerNow) : undefined}
+          note={scannerLevel === "ERROR" ? `Last run ${lastRun ? new Date(lastRun.started_at).toLocaleString() : "-"}` : undefined}
+        />
+        <StatusRow
+          label="News ingestion"
+          level={newsLevel}
+          detail={newsJob ? relativeTimeShort(newsJob.started_at, scannerNow) : undefined}
+          note={
+            newsLevel === "ERROR" || newsLevel === "WARNING"
+              ? `Last run ${newsJob ? new Date(newsJob.started_at).toLocaleString() : "-"}${newsJob?.error_summary ? ` · ${newsJob.error_summary}` : ""}`
+              : undefined
+          }
+        />
+        <StatusRow
+          label="Qwen (AI coach)"
+          level={qwenLevel}
+          note={
+            qwenLevel === "ERROR"
+              ? `Last ${aiFailures.length} call(s) failed (${aiFailures[0]?.error_kind ?? "unknown"})`
+              : qwenLevel === "WARNING" && !qwenConfig
+                ? "Not configured"
+                : undefined
+          }
+        />
+        <StatusRow label="Telegram" level={telegramConfig ? "UNKNOWN" : "WARNING"} note={telegramConfig ? "Configured - use Settings to test" : "Not configured"} />
+        <StatusRow label="Bybit Demo" level={demoConfig ? "HEALTHY" : "WARNING"} note={demoConfig ? undefined : "Not configured · informational, PAPER unaffected"} />
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Integrations</CardTitle>
-        </CardHeader>
-        <CardContent className="divide-border divide-y">
-          <Row
-            label="Supabase"
-            level="HEALTHY"
-            detail="Database connection used to render this page succeeded."
-          />
-          <Row
-            label="Market scanner"
-            level={scannerLevel}
-            detail={lastRun ? `Last run: ${new Date(lastRun.started_at).toLocaleString()} - ${lastRun.status}` : "Has not run yet."}
-          />
-          <Row
-            label="News ingestion"
-            level={newsLevel}
-            detail={
-              newsJob
-                ? `Last run: ${new Date(newsJob.started_at).toLocaleString()} - ${newsJob.status}, ${newsJob.records_processed} new event(s).${newsJob.error_summary ? ` Provider issues: ${newsJob.error_summary}` : ""}`
-                : "Has not run yet. Trading is unaffected either way."
-            }
-          />
-          <Row
-            label="Qwen (AI coach)"
-            level={qwenLevel}
-            detail={
-              !qwenConfig
-                ? "Not configured - news analysis, explanations and lessons unavailable. Trading unaffected."
-                : lastAiSuccess
-                  ? `Configured via ${qwenConfig.source}; model ${qwenConfig.model}. Last successful call ${new Date(lastAiSuccess.created_at).toLocaleString()}.`
-                  : aiFailures.length > 0
-                    ? `Configured via ${qwenConfig.source}, but the last ${aiFailures.length} call(s) failed (${aiFailures[0].error_kind ?? "unknown"}). Trading is unaffected.`
-                    : `Configured via ${qwenConfig.source}; no call has been made yet, so health is unproven.`
-            }
-          />
-          <Row
-            label="Telegram"
-            level={telegramConfig ? "UNKNOWN" : "WARNING"}
-            detail={telegramConfig ? `Configured via ${telegramConfig.source}; use Settings → Test connection for a live outbound check.` : "Not configured - notifications unavailable, dashboard unaffected."}
-          />
-          <Row
-            label="Bybit Demo"
-            level={demoConfig ? "HEALTHY" : "WARNING"}
-            detail={demoConfig ? `Configured via ${demoConfig.source}.` : "Not configured - Demo execution unavailable, paper trading unaffected."}
-          />
-        </CardContent>
-      </Card>
+      <div className="rounded-lg border p-4">
+        <h2 className="text-sm font-medium">AI usage</h2>
+        {aiCalls.length === 0 ? (
+          <p className="text-muted-foreground mt-2 text-sm">No calls recorded</p>
+        ) : (
+          <p className="mt-2 text-sm">
+            {aiCalls.length} call{aiCalls.length === 1 ? "" : "s"} · {aiFailures.length} failed · {totalTokens.toLocaleString()} tokens
+          </p>
+        )}
+      </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">AI usage (last 50 calls)</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {aiCalls.length === 0 ? (
-            <p className="text-muted-foreground text-sm">
-              No AI calls recorded. Routine scans and ingestion runs are expected to make none.
-            </p>
-          ) : (
-            <div className="text-sm">
-              <p>
-                {aiCalls.length} call(s), {aiFailures.length} failed, {totalTokens.toLocaleString()} tokens total.
-              </p>
-              <p className="text-muted-foreground mt-1 text-xs">
-                Token counts only - no monetary cost is shown, because reliable per-token pricing for the configured
-                model is not known to this application.
-              </p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Recent scan runs</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {jobRuns && jobRuns.length > 0 ? (
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Started</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Processed</TableHead>
-                  <TableHead>Error</TableHead>
+      <div className="rounded-lg border p-4">
+        <h2 className="mb-2 text-sm font-medium">Recent scans</h2>
+        {jobRuns && jobRuns.length > 0 ? (
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Started</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Processed</TableHead>
+                <TableHead>Error</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {jobRuns.map((run) => (
+                <TableRow key={run.id}>
+                  <TableCell><Timestamp iso={run.started_at} /></TableCell>
+                  <TableCell>{run.status}</TableCell>
+                  <TableCell className="tabular-nums">{run.records_processed}</TableCell>
+                  <TableCell className="text-muted-foreground max-w-xs truncate text-xs">{run.error_summary ?? "-"}</TableCell>
                 </TableRow>
-              </TableHeader>
-              <TableBody>
-                {jobRuns.map((run) => (
-                  <TableRow key={run.id}>
-                    <TableCell className="font-mono text-xs">{new Date(run.started_at).toLocaleString()}</TableCell>
-                    <TableCell>{run.status}</TableCell>
-                    <TableCell>{run.records_processed}</TableCell>
-                    <TableCell className="text-muted-foreground max-w-xs truncate text-xs">{run.error_summary ?? "-"}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          ) : (
-            <p className="text-muted-foreground text-sm">No scan runs recorded yet.</p>
-          )}
-        </CardContent>
-      </Card>
+              ))}
+            </TableBody>
+          </Table>
+        ) : (
+          <p className="text-muted-foreground text-sm">No scans yet</p>
+        )}
+      </div>
     </div>
   );
 }
