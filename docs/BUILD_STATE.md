@@ -174,3 +174,32 @@ Last updated: 2026-09-13
   would have failed at its final step. Every LIVE prohibition is untouched.
 - Gate: 334 tests, typecheck clean, production build clean, lint unchanged at
   the same 2 pre-existing warnings.
+
+### Milestone 6 production activation (2026-09-14)
+
+Activated only after production was confirmed to be running the new code:
+the scheduled scan at 00:35:52 UTC returned SUCCEEDED carrying
+`executionPolicy` / `researchWindowActive` in `job_runs.metadata`, fields
+that exist only in this build, and `/api/settings/research` answered 401
+(route matched) rather than 404 on the canonical production URL.
+
+Activated state:
+- `trading_mode = PAPER`, `execution_policy = AUTO`
+- research session `82058733-e894-41ab-9f3c-249b8cad62fb`,
+  2026-09-14T00:36:46Z -> 2026-09-28T00:36:46Z (exactly 14 days)
+- starting PAPER equity $20.00 (seeded: there were zero PAPER trades and
+  zero PAPER snapshots, so no history was rewritten), target $50.00
+  informational only
+- Strategy V1 status: DRAFT, unchanged and not promoted
+- `live_trading_enabled = false`; all three LIVE layers re-verified as
+  refusing (settings flag, trading_mode, trades CHECK)
+
+Two crons only: `davinki_scan_5m` (*/5) and `davinki_news_15m`
+(2,17,32,47 - offset so news never contends with a scan). News ingestion was
+verified working before scheduling: 4/4 providers OK, 100 items fetched,
+1 event stored, 1 AI analysis, 0 failures.
+
+Known transient: between 00:10 and 00:30 UTC the Supabase Edge runtime could
+not reach the project's own REST/Auth endpoints (504s), so several scans did
+not run. This predates the deployment and cleared on its own; scans resumed
+SUCCEEDED from 00:35.
