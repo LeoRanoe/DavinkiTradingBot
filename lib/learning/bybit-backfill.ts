@@ -1,6 +1,6 @@
 import { getCandles } from "@/lib/bybit/client";
 import { collectResearchCandles } from "./backfill";
-import type { OutcomeCandle } from "./types";
+import type { Candle } from "@/lib/bybit/types";
 
 /**
  * Fetches a bounded page sequence from Bybit for research only. Callers own
@@ -15,7 +15,7 @@ export async function backfillBybitResearchCandles(input: {
   existingOpenTimes?: ReadonlySet<number>;
   resumeEndMs?: number | null;
   nowMs?: number;
-}): Promise<{ candles: OutcomeCandle[]; resumeEndMs: number | null; pages: number }> {
+}): Promise<{ candles: Candle[]; resumeEndMs: number | null; pages: number }> {
   return collectResearchCandles({
     maxPages: input.maxPages,
     pageSize: input.pageSize,

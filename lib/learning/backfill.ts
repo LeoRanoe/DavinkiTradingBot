@@ -1,12 +1,19 @@
 import type { OutcomeCandle } from "./types";
 
-export type ResearchCandlePage = { candles: OutcomeCandle[]; nextEndMs: number | null };
-export type ResearchCandleFetcher = (endMs: number | null, limit: number) => Promise<ResearchCandlePage>;
+export type ResearchCandlePage<T extends OutcomeCandle = OutcomeCandle> = { candles: T[]; nextEndMs: number | null };
+export type ResearchCandleFetcher<T extends OutcomeCandle = OutcomeCandle> = (endMs: number | null, limit: number) => Promise<ResearchCandlePage<T>>;
 
-/** Bounded, resumable, idempotent research-only backfill planner. It has no access to live scanner watermarks. */
-export async function collectResearchCandles(input: { fetchPage: ResearchCandleFetcher; existingOpenTimes?: ReadonlySet<number>; maxPages: number; pageSize: number; nowMs: number; resumeEndMs?: number | null }): Promise<{ candles: OutcomeCandle[]; resumeEndMs: number | null; pages: number }> {
+/**
+ * Bounded, resumable, idempotent research-only backfill planner. It has no access to live scanner watermarks.
+ *
+ * Generic over the candle shape so a richer source candle (one carrying
+ * volume, say) survives the round trip intact. Scoring reads volume, so
+ * narrowing to the bare OHLC shape here would silently produce backfilled
+ * candles that score differently from live ones.
+ */
+export async function collectResearchCandles<T extends OutcomeCandle>(input: { fetchPage: ResearchCandleFetcher<T>; existingOpenTimes?: ReadonlySet<number>; maxPages: number; pageSize: number; nowMs: number; resumeEndMs?: number | null }): Promise<{ candles: T[]; resumeEndMs: number | null; pages: number }> {
   const known = input.existingOpenTimes ?? new Set<number>();
-  const output = new Map<number, OutcomeCandle>();
+  const output = new Map<number, T>();
   let endMs = input.resumeEndMs ?? null;
   let pages = 0;
   while (pages < input.maxPages) {
