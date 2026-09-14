@@ -19,6 +19,14 @@ import { reconcileResearchExpiry } from "@/lib/research/expiry";
 import { effectiveExecutionPolicy } from "@/lib/research/policy";
 import { isStrategyEligibleForPaper } from "@/lib/research/eligibility";
 import { formatResearchDay } from "@/lib/research/window";
+import {
+  createCandleLoader,
+  loadUnsettledShadows,
+  queueShadowCandidates,
+  researchPlanFor,
+  settleShadows,
+  type ShadowCandidate,
+} from "@/lib/research/shadow";
 import { executeCandidate } from "@/lib/trading/execute";
 import { loadRecentNewsEvents } from "@/lib/news/store";
 import { buildCandidateNewsContext, DEFAULT_NEWS_WINDOW_MS } from "@/lib/news/candidate-context";
@@ -124,6 +132,11 @@ export async function POST(request: NextRequest) {
   const errors: string[] = [];
   let autoExecuted = 0;
   let autoRejected = 0;
+  // Setups that were NOT traded, collected for counterfactual research.
+  // Strictly hypothetical: these can never affect equity or actual results.
+  const shadowCandidates: ShadowCandidate[] = [];
+  let shadowsQueued = 0;
+  let shadowsSettled = 0;
 
   // ---------------------------------------------------------------------
   // PHASE 0 - reconcile the research window BEFORE anything can execute.
@@ -467,6 +480,56 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // ---- Shadow capture (research only) -------------------------------
+      // Every setup that was evaluated but not traded becomes a
+      // counterfactual: sub-threshold bands, and candidates the deterministic
+      // risk layer refused. The exact reason is preserved so the research can
+      // tell "we filtered noise" from "we filtered edge".
+      //
+      // Nothing queued here can ever reach PAPER equity: these rows live in
+      // counterfactual_outcomes, which carries CHECK (is_hypothetical).
+      if (insertedSignal) {
+        const plan = researchPlanFor(
+          {
+            entry_price: evaluation.score.entryPrice,
+            stop_price: evaluation.score.stopPrice,
+            target_price: evaluation.score.targetPrice,
+            candle_time: new Date(evaluation.candleTime).toISOString(),
+          },
+          settings,
+        );
+
+        if (plan) {
+          if (!isCandidate) {
+            // LOG / WATCH: below the CANDIDATE threshold. This is what makes
+            // the score-band question answerable at all.
+            shadowCandidates.push({
+              signalId: insertedSignal.id,
+              symbol,
+              source: "SCORE_BAND_SHADOW",
+              rejectionReason: `BELOW_CANDIDATE_THRESHOLD_${evaluation.score.classification}`,
+              score: evaluation.score.total,
+              regime: evaluation.regime,
+              plan,
+              researchSessionId,
+            });
+          } else if (candidateResult?.kind === "REJECTED") {
+            // Strategy-valid but refused by the deterministic risk layer.
+            shadowCandidates.push({
+              signalId: insertedSignal.id,
+              symbol,
+              source:
+                candidateResult.rejection.reason === "ENTRY_OUTSIDE_ALLOWED_RANGE" ? "ENTRY_DRIFT" : "RISK_BLOCKED",
+              rejectionReason: candidateResult.rejection.reason,
+              score: evaluation.score.total,
+              regime: evaluation.regime,
+              plan,
+              researchSessionId,
+            });
+          }
+        }
+      }
+
       // Relational index of which events this candidate used. The immutable
       // snapshot on the signal row remains the authority for display.
       if (insertedSignal && newsContext && newsContext.events.length > 0) {
@@ -555,6 +618,31 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  // ---------------------------------------------------------------------
+  // PHASE 3 - shadow research (counterfactual only).
+  //
+  // Runs LAST, after every trading decision is already committed, and every
+  // failure is swallowed. Research must never be able to delay, block or
+  // unwind an actual position - it is strictly an observer of decisions
+  // already made.
+  // ---------------------------------------------------------------------
+  try {
+    const queued = await queueShadowCandidates(admin, shadowCandidates);
+    shadowsQueued = queued.queued;
+  } catch (shadowErr) {
+    errors.push(`shadow queue: ${(shadowErr as Error).message}`);
+  }
+
+  try {
+    // Bounded per run so research can never crowd out the trading path.
+    const unsettled = await loadUnsettledShadows(admin, 100);
+    const settled = await settleShadows(admin, unsettled, createCandleLoader(admin));
+    shadowsSettled = settled.settled;
+    if (settled.failures > 0) errors.push(`shadow settle: ${settled.failures} failed`);
+  } catch (settleErr) {
+    errors.push(`shadow settle: ${(settleErr as Error).message}`);
+  }
+
   const status = errors.length > 0 && recordsProcessed === 0
     ? "FAILED"
     : recordsProcessed === 0 && tradesClosed === 0
@@ -569,6 +657,8 @@ export async function POST(request: NextRequest) {
     autoExecuted,
     autoRejected,
     researchSessionId,
+    shadowsQueued,
+    shadowsSettled,
   });
 
   return NextResponse.json({
@@ -585,6 +675,8 @@ export async function POST(request: NextRequest) {
     researchWindowActive: Boolean(researchSessionId),
     autoExecuted,
     autoRejected,
+    shadowsQueued,
+    shadowsSettled,
     errors,
   });
 }

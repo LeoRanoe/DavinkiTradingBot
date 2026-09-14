@@ -294,9 +294,14 @@ export type Database = {
           outcome: string
           plan_snapshot: Json
           r_multiple: number | null
+          regime: string | null
           rejection_reason: string | null
+          research_session_id: string | null
+          score: number | null
+          score_band: string | null
           signal_id: string
           source: string
+          symbol: string | null
         }
         Insert: {
           conservative_ambiguous_candle?: boolean
@@ -315,9 +320,14 @@ export type Database = {
           outcome?: string
           plan_snapshot: Json
           r_multiple?: number | null
+          regime?: string | null
           rejection_reason?: string | null
+          research_session_id?: string | null
+          score?: number | null
+          score_band?: string | null
           signal_id: string
           source: string
+          symbol?: string | null
         }
         Update: {
           conservative_ambiguous_candle?: boolean
@@ -336,11 +346,23 @@ export type Database = {
           outcome?: string
           plan_snapshot?: Json
           r_multiple?: number | null
+          regime?: string | null
           rejection_reason?: string | null
+          research_session_id?: string | null
+          score?: number | null
+          score_band?: string | null
           signal_id?: string
           source?: string
+          symbol?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "counterfactual_outcomes_research_session_id_fkey"
+            columns: ["research_session_id"]
+            isOneToOne: false
+            referencedRelation: "paper_research_sessions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "counterfactual_outcomes_signal_id_fkey"
             columns: ["signal_id"]
