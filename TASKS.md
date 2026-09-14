@@ -184,3 +184,54 @@ list of everything the full spec still asks for that is NOT done yet.
   research engine, holdout/walk-forward/cost-stress, shadow forward,
   correlation analytics, multiple-testing accounting, real forex adapter)
   is genuinely NOT implemented. See "Not done yet" in `docs/BUILD_STATE.md`.
+
+## Multi-market architecture — Checkpoint 2 (configurable crypto research universe)
+
+Scope: a proposed, additive DB schema for a configurable crypto research
+universe, a Bybit instrument-discovery capability, a pure eligibility
+classifier, and a repository layer over both an in-memory fixture and the
+proposed schema. **The migration has NOT been applied to the live Supabase
+project** — it is included for owner review only, per instruction. See
+`docs/BUILD_STATE.md` "Checkpoint 2" for the full report (proposed tables,
+RLS, live-verification status, and everything still outstanding).
+
+- [x] Proposed migration `supabase/migrations/20260914130000_multi_market_universe.sql`:
+  `venues`, `instruments`, `universes`, `universe_members`,
+  `instrument_research_eligibility`. Additive-only; validated locally
+  against a scratch PostgreSQL 16 database (DDL applies, is idempotent on
+  re-run, CHECK constraints reject bad `asset_class`/`purpose` values) —
+  never applied to the live project.
+- [x] `lib/domain/eligibility.ts` — pure UNKNOWN/ELIGIBLE/INELIGIBLE
+  classifier; never fabricates a verdict when a required metric is missing.
+- [x] `lib/domain/discovery/bybit-instrument-discovery.ts` — venue-neutral
+  discovery over `lib/bybit/client.ts`'s new `listSpotInstruments()` /
+  `getListingStatus()` (additive exports; existing `getInstrumentMetadata`/
+  `getCandles`/`getTicker` untouched). Raw Bybit shapes never cross the
+  adapter boundary.
+- [x] `lib/domain/universe.ts` (`UniverseRepository`, `InMemoryUniverseRepository`)
+  and `lib/domain/repository/supabase-universe-repository.ts`
+  (`SupabaseUniverseRepository`, untyped against the generated `Database`
+  type until the migration is applied and types are regenerated). Batched:
+  `listUniverseMembers` is one query with an embedded join, proven by a
+  call-count assertion in tests.
+- [x] `Ticker` gained an additive `turnover24h` field (from Bybit's existing
+  `turnover24h` response field, already Zod-validated but previously
+  unmapped) — read by the new eligibility check only.
+- [x] 39 new tests (500 total, up from 461): eligibility classification,
+  discovery heuristics (leveraged-token/stablecoin naming patterns,
+  explicitly documented as heuristic not authoritative), repository
+  research/paper isolation and batch-loading, forex-fixture compatibility
+  with zero schema change, migration static-safety checks (no DROP, no
+  `paper_enabled = true`, no `live_enabled` column, RLS present,
+  idempotency), and a V1-production-unchanged regression guard.
+- [x] typecheck/lint/build clean.
+- [ ] Live Bybit discovery for SOL/XRP/BNB could NOT be run from this
+  sandbox (outbound requests to `api.bybit.com` are geo-blocked here, same
+  restriction already documented in `lib/bybit/client.ts` for production's
+  Vercel region). The migration seeds them with
+  `metadata.verifiedOnVenue: false` and `instrument_research_eligibility.status
+  = 'UNKNOWN'` rather than claiming a verified result. Must be re-run from
+  the deployed environment before treating them as confirmed.
+- [ ] Settings → Markets UI deferred: per instruction, backend/domain first,
+  UI as a small follow-up rather than sacrificing schema quality to ship a
+  page against tables that don't exist yet.
