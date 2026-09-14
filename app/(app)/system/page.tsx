@@ -10,6 +10,7 @@ import { effectiveExecutionPolicy } from "@/lib/research/policy";
 import { formatTimeRemaining, researchProgress, researchWindowState } from "@/lib/research/window";
 import { evidenceLevel } from "@/lib/learning/analytics";
 import { riskSettingsFromRow } from "@/lib/settings/risk-settings";
+import { scannerHealthLevel } from "@/lib/health/scanner";
 
 function Row({ label, level, detail }: { label: string; level: SystemHealthLevel; detail: string }) {
   return (
@@ -75,16 +76,11 @@ export default async function SystemPage() {
   // Server Component: this value is intentionally evaluated once per request
   // so the health badge can detect a scheduler that has stopped advancing.
   // eslint-disable-next-line react-hooks/purity
-  const lastRunAgeMs = lastRun ? Date.now() - new Date(lastRun.started_at).getTime() : null;
-  const scannerLevel: SystemHealthLevel = !lastRun
-    ? "UNKNOWN"
-    : lastRun.status === "FAILED" || (lastRunAgeMs !== null && lastRunAgeMs > 12 * 60_000)
-      ? "ERROR"
-      : lastRunAgeMs !== null && lastRunAgeMs > 7 * 60_000
-        ? "WARNING"
-        : lastRun.status === "SUCCEEDED" || lastRun.status === "NOOP"
-          ? "HEALTHY"
-          : "WARNING";
+  const scannerNow = Date.now();
+  const scannerLevel: SystemHealthLevel = scannerHealthLevel(
+    lastRun ? { status: lastRun.status, startedAt: lastRun.started_at } : null,
+    scannerNow,
+  );
 
   // News ingestion health. Deliberately NOT "healthy because a feed URL is
   // configured": it reflects whether the job actually ran and what happened.

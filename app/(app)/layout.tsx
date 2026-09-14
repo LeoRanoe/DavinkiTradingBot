@@ -3,9 +3,9 @@ import { createClient } from "@/lib/supabase/server";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/dashboard/app-sidebar";
 import { DashboardHeader } from "@/components/dashboard/dashboard-header";
-import type { SystemHealthLevel } from "@/components/dashboard/system-status-badge";
 import type { TradingMode } from "@/lib/types/trading-mode";
 import { getUserRole } from "@/lib/auth/authorization";
+import { scannerHealthLevel } from "@/lib/health/scanner";
 
 function relativeTime(iso: string | null): string {
   if (!iso) return "never";
@@ -39,12 +39,14 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   const mode: TradingMode = settings?.trading_mode ?? "OBSERVE";
 
-  let scannerHealth: SystemHealthLevel = "UNKNOWN";
-  if (lastJob) {
-    if (lastJob.status === "SUCCEEDED") scannerHealth = "HEALTHY";
-    else if (lastJob.status === "FAILED") scannerHealth = "ERROR";
-    else scannerHealth = "WARNING";
-  }
+  // Server Component: evaluated once per request so a scanner that has
+  // stopped advancing is correctly detected as stale, not just by status.
+  // eslint-disable-next-line react-hooks/purity
+  const layoutNow = Date.now();
+  const scannerHealth = scannerHealthLevel(
+    lastJob ? { status: lastJob.status, startedAt: lastJob.started_at } : null,
+    layoutNow,
+  );
 
   return (
     <SidebarProvider>

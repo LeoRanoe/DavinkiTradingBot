@@ -5,7 +5,7 @@ import { MetricCard } from "@/components/dashboard/metric-card";
 import { EmptyState } from "@/components/dashboard/empty-state";
 import { SetupScore } from "@/components/dashboard/setup-score";
 import { ModeBadge } from "@/components/dashboard/mode-badge";
-import { SystemStatusBadge, type SystemHealthLevel } from "@/components/dashboard/system-status-badge";
+import { SystemStatusBadge } from "@/components/dashboard/system-status-badge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,29 +15,41 @@ import { loadCurrentResearchWindow } from "@/lib/research/store";
 import { effectiveExecutionPolicy } from "@/lib/research/policy";
 import { formatResearchDay, researchWindowState } from "@/lib/research/window";
 import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
+import { scannerHealthLevel } from "@/lib/health/scanner";
 
 const money = (value: number) => "$" + value.toFixed(2);
 const timeLabel = (iso: string | null) => iso ? new Date(iso).toLocaleString() : "Not recorded";
 
-function scannerHealth(status: string | undefined): SystemHealthLevel {
-  if (status === "SUCCEEDED" || status === "NOOP") return "HEALTHY";
-  if (status === "FAILED") return "ERROR";
-  return status ? "WARNING" : "UNKNOWN";
-}
-
 export default async function DashboardPage() {
   const supabase = await createClient();
-  const [{ data: settings }, { data: snapshots }, { data: openTrades }, { data: pendingSignals }, { data: recentSignals }, { data: candles }, { data: lastJob }, { data: recentEvents }, { data: latestNews }, { data: closedTrades }, { data: strategyVersion }] = await Promise.all([
+  const [
+    { data: settings },
+    { data: latestSnapshot },
+    { data: peakSnapshot },
+    { data: openTrades },
+    { data: pendingSignals },
+    { data: recentSignals },
+    { data: candles },
+    { data: lastJob },
+    { data: recentEvents },
+    { data: latestNews },
+    { data: closedTrades },
+    { data: strategyVersion },
+  ] = await Promise.all([
     supabase.from("system_settings").select("*").eq("id", true).single(),
-    supabase.from("portfolio_snapshots").select("equity, taken_at").eq("trading_mode", "PAPER").order("taken_at", { ascending: true }).limit(500),
-    supabase.from("trades").select("*").eq("status", "OPEN").order("opened_at", { ascending: false }).limit(1),
-    supabase.from("signals").select("*").eq("classification", "CANDIDATE").eq("approval_status", "PENDING").order("candle_time", { ascending: false }).limit(1),
+    // Only the latest and peak equity are rendered here - the full history
+    // (used for the equity curve) is loaded on /performance instead, so this
+    // reads 2 rows rather than up to 500.
+    supabase.from("portfolio_snapshots").select("equity, taken_at").eq("trading_mode", "PAPER").order("taken_at", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("portfolio_snapshots").select("equity").eq("trading_mode", "PAPER").order("equity", { ascending: false }).limit(1).maybeSingle(),
+    supabase.from("trades").select("id, symbol, trading_mode, entry_price, stop_price, target_price, opened_at, modeled_max_loss, risk_amount").eq("status", "OPEN").order("opened_at", { ascending: false }).limit(1),
+    supabase.from("signals").select("id, symbol, score, classification, planned_entry, stop_price, target_price").eq("classification", "CANDIDATE").eq("approval_status", "PENDING").order("candle_time", { ascending: false }).limit(1),
     supabase.from("signals").select("id, symbol, candle_time, score, classification, regime, volatility_state, news_risk, approval_status, rejection_reason, reason").in("symbol", STRATEGY_V1_PARAMS.symbols as unknown as string[]).order("candle_time", { ascending: false }).limit(30),
     supabase.from("candles").select("symbol, close, open_time").eq("timeframe", "15M").in("symbol", STRATEGY_V1_PARAMS.symbols as unknown as string[]).order("open_time", { ascending: false }).limit(20),
     supabase.from("job_runs").select("status, started_at, completed_at, records_processed").eq("job_name", "scan").order("started_at", { ascending: false }).limit(1).maybeSingle(),
     supabase.from("audit_events").select("id, action, created_at, metadata").order("created_at", { ascending: false }).limit(8),
     supabase.from("news_events").select("id, headline, news_risk, published_at").order("published_at", { ascending: false }).limit(1).maybeSingle(),
-    supabase.from("trades").select("*").eq("status", "CLOSED").order("closed_at", { ascending: false }).limit(500),
+    supabase.from("trades").select("id, symbol, strategy_version_id, opened_at, closed_at, pnl, fees, slippage, r_multiple").eq("status", "CLOSED").order("closed_at", { ascending: false }).limit(500),
     // Read, never assumed: the badge must show the real status, so a DRAFT
     // strategy in a research window is never displayed as PAPER_APPROVED.
     supabase.from("strategy_versions").select("version_label, status").eq("version_label", "v1").maybeSingle(),
@@ -64,8 +76,8 @@ export default async function DashboardPage() {
 
   const startingEquity = researchWindow?.startingEquity ?? INITIAL_PAPER_EQUITY;
   const targetEquity = researchWindow?.targetEquity ?? 50;
-  const equity = snapshots?.at(-1)?.equity ?? startingEquity;
-  const peakEquity = Math.max(startingEquity, ...(snapshots ?? []).map((snapshot) => snapshot.equity));
+  const equity = latestSnapshot?.equity ?? startingEquity;
+  const peakEquity = Math.max(startingEquity, peakSnapshot?.equity ?? startingEquity);
   const drawdown = peakEquity > 0 ? ((equity - peakEquity) / peakEquity) * 100 : 0;
   const todayStart = new Date(); todayStart.setUTCHours(0, 0, 0, 0);
   const todayPnl = (closedTrades ?? []).filter((trade) => trade.closed_at && new Date(trade.closed_at) >= todayStart).reduce((total, trade) => total + (trade.pnl ?? 0), 0);
@@ -80,7 +92,10 @@ export default async function DashboardPage() {
   const openTrade = openTrades?.[0];
   const pendingCandidate = pendingSignals?.[0];
   const latestRejection = recentSignals?.find((signal) => signal.rejection_reason);
-  const health = scannerHealth(lastJob?.status);
+  const health = scannerHealthLevel(
+    lastJob ? { status: lastJob.status, startedAt: lastJob.started_at } : null,
+    now,
+  );
   const progress = Math.max(0, Math.min(100, (equity / targetEquity) * 100));
 
   return (
