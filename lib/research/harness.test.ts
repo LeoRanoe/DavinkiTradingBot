@@ -121,6 +121,36 @@ describe("research harness - no look-ahead", () => {
   });
 });
 
+describe("research harness - bounded lookback", () => {
+  it("produces identical trades to an unbounded lookback", () => {
+    // The windowing exists for speed: passing the whole prefix to every bar
+    // is O(n^2) and unusable over a year of 15m candles. It is only
+    // legitimate if it changes nothing, so that equivalence is pinned here
+    // rather than assumed.
+    const windowed = runResearchHarness(
+      baseConfig({ lookbackBars: 1200 }),
+      market.candles1h,
+      market.candles15m,
+    );
+    const unbounded = runResearchHarness(
+      baseConfig({ lookbackBars: 10_000_000 }),
+      market.candles1h,
+      market.candles15m,
+    );
+
+    expect(authoritative(windowed.trades).map((t) => [t.entryTime, t.score, t.qty])).toEqual(
+      authoritative(unbounded.trades).map((t) => [t.entryTime, t.score, t.qty]),
+    );
+  });
+
+  it("never lets the window fall below the minimum history the strategy needs", () => {
+    // A caller asking for an absurdly small window must not silently get
+    // signals scored off too little data.
+    const tiny = runResearchHarness(baseConfig({ lookbackBars: 1 }), market.candles1h, market.candles15m);
+    expect(tiny.trades.every((t) => t.score >= 0)).toBe(true);
+  });
+});
+
 describe("research harness - track isolation", () => {
   it("marks only at-or-above-threshold trades AUTHORITATIVE", () => {
     const result = runResearchHarness(

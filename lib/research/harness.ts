@@ -118,6 +118,17 @@ export type HarnessConfig = {
   includeShadowBands?: boolean;
   /** Lowest score worth recording at all. Below this is noise. */
   shadowMinScore?: number;
+  /**
+   * How many trailing bars each evaluation may see.
+   *
+   * Passing the entire prefix to every bar makes a run O(n^2): over a year of
+   * 15m candles that is ~35,000 evaluations against an average 17,500-bar
+   * slice, which is far too slow to be usable. Every indicator V1 uses needs
+   * only a bounded lookback, so a generous fixed window is both tractable and
+   * numerically equivalent in practice - the slowest-converging one, EMA200,
+   * discounts a bar 1,200 back by (1 - 2/201)^1200, about 6e-6.
+   */
+  lookbackBars?: number;
 };
 
 export type HarnessResult = {
@@ -129,6 +140,9 @@ export type HarnessResult = {
 };
 
 const MIN_HISTORY = 210; // EMA200 plus buffer
+
+/** Trailing window per evaluation. See `lookbackBars` for why this is bounded. */
+const DEFAULT_LOOKBACK_BARS = 1200;
 
 /**
  * Runs Strategy V1 across history under one research configuration.
@@ -151,20 +165,30 @@ export function runResearchHarness(
   const stopTarget = config.stopTarget ?? V1_STOP_TARGET;
   const delay = Math.max(0, config.entryDelayBars ?? 0);
   const shadowMinScore = config.shadowMinScore ?? 60;
+  const lookback = Math.max(MIN_HISTORY, config.lookbackBars ?? DEFAULT_LOOKBACK_BARS);
 
   const closed1h = candles1h.filter((c) => c.isClosed);
   const closed15m = candles15m.filter((c) => c.isClosed);
 
   // The authoritative track carries position state; shadow trades do not.
   let authoritativeOpenUntil = -1;
+  // Moving cursor into the 1H series, advanced monotonically with `i`.
+  let h1 = -1;
 
   for (let i = MIN_HISTORY; i < closed15m.length - (delay + 1); i += 1) {
     const candle = closed15m[i];
 
-    // No look-ahead: only candles up to and including this one are visible.
-    const hist15m = closed15m.slice(0, i + 1);
-    const hist1h = closed1h.filter((c) => c.openTime <= candle.openTime);
-    if (hist1h.length < MIN_HISTORY) continue;
+    // No look-ahead: only candles up to and including this one are visible,
+    // and only a bounded trailing window of them (see `lookbackBars`).
+    const hist15m = closed15m.slice(Math.max(0, i + 1 - lookback), i + 1);
+
+    // The 1H series is walked with a moving cursor rather than re-filtered per
+    // bar; re-scanning it every iteration was the other half of the O(n^2).
+    while (h1 + 1 < closed1h.length && closed1h[h1 + 1].openTime <= candle.openTime) h1 += 1;
+    if (closed1h[h1] === undefined || closed1h[h1].openTime > candle.openTime) continue;
+    const available1h = h1 + 1;
+    if (available1h < MIN_HISTORY) continue;
+    const hist1h = closed1h.slice(Math.max(0, available1h - lookback), available1h);
 
     const evaluation = evaluateSignal(config.symbol, hist1h, hist15m);
     if (evaluation.kind !== "SIGNAL") continue;
