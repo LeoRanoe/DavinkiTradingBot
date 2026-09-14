@@ -186,8 +186,50 @@ export async function getTicker(symbol: string): Promise<Ticker> {
     highPrice24h: Number(t.highPrice24h),
     lowPrice24h: Number(t.lowPrice24h),
     volume24h: Number(t.volume24h),
+    turnover24h: Number(t.turnover24h),
     serverTimeMs: parsed.data.time,
   };
+}
+
+/**
+ * Lists ALL Bybit spot instruments (no symbol filter) - the discovery
+ * capability Checkpoint 2 needs to verify a candidate research pair
+ * actually exists on the venue before naming it in the domain model.
+ * Additive: getInstrumentMetadata (single-symbol) is untouched.
+ */
+export async function listSpotInstruments(): Promise<InstrumentMetadata[]> {
+  const raw = await bybitFetch("/v5/market/instruments-info", { category: "spot" });
+
+  const parsed = bybitInstrumentsResponseSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new BybitApiError(`Invalid Bybit instruments-list response: ${parsed.error.message}`);
+  }
+  if (parsed.data.retCode !== 0) {
+    throw new BybitApiError(parsed.data.retMsg, parsed.data.retCode);
+  }
+
+  return parsed.data.result.list.map((info) => ({
+    symbol: info.symbol,
+    baseCoin: info.baseCoin,
+    quoteCoin: info.quoteCoin,
+    tickSize: Number(info.priceFilter.tickSize),
+    qtyStep: Number(info.lotSizeFilter.qtyStep ?? info.lotSizeFilter.basePrecision),
+    minOrderQty: info.lotSizeFilter.minOrderQty ? Number(info.lotSizeFilter.minOrderQty) : 0,
+    minOrderAmt: Number(info.lotSizeFilter.minOrderAmt),
+    maxOrderQty: info.lotSizeFilter.maxLimitOrderQty
+      ? Number(info.lotSizeFilter.maxLimitOrderQty)
+      : info.lotSizeFilter.maxOrderQty
+        ? Number(info.lotSizeFilter.maxOrderQty)
+        : null,
+    priceScale: (info.priceFilter.tickSize.split(".")[1] ?? "").length,
+    raw: info,
+  }));
+}
+
+/** Bybit's instrument `status` field for the given raw metadata, e.g. "Trading". */
+export function getListingStatus(meta: InstrumentMetadata): string | null {
+  const raw = meta.raw as { status?: unknown } | null;
+  return typeof raw?.status === "string" ? raw.status : null;
 }
 
 export { BybitApiError };

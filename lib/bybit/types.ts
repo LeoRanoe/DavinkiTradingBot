@@ -31,6 +31,13 @@ export type Ticker = {
   lowPrice24h: number;
   volume24h: number;
   /**
+   * 24h turnover in quote currency (e.g. USDT). Additive field - added for
+   * the Checkpoint 2 research-eligibility turnover check
+   * (lib/domain/eligibility.ts); not read by Strategy V1 or any existing
+   * candidate/risk code.
+   */
+  turnover24h: number;
+  /**
    * Exchange server time (ms epoch) from the response envelope. Used as the
    * market-data freshness stamp so a candidate can never be priced off a
    * stale quote - see lib/risk/entry-protection.ts.

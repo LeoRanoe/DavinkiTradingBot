@@ -72,6 +72,7 @@ describe("BybitMarketDataProvider parity with lib/bybit/client.ts", () => {
       highPrice24h: 66000,
       lowPrice24h: 64000,
       volume24h: 12345,
+      turnover24h: 800_000_000,
       serverTimeMs: 1_700_000_000_000,
     };
     (getTicker as ReturnType<typeof vi.fn>).mockResolvedValue(raw);

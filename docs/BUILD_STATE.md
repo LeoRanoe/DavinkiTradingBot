@@ -290,3 +290,202 @@ migration, no UI, and none of these exist yet):
 - Live-instrument eligibility verification (listing date, liquidity,
   turnover, spread) for SOL/XRP/BNB — the registry only proves the domain
   model can name them; nothing has checked them against the venue yet.
+
+## Multi-market architecture — Checkpoint 2 (2026-09-14)
+
+**THE MIGRATION BELOW HAS NOT BEEN APPLIED TO THE LIVE SUPABASE PROJECT.**
+Per instruction, this checkpoint stops at proposing the schema for owner
+review. Nothing in this section mutated production data, deployed an Edge
+Function, or changed live RLS.
+
+### 1-4. Proposed DB tables, columns, RLS
+
+File: `supabase/migrations/20260914130000_multi_market_universe.sql`
+(additive only; full rationale and inline comments in the file itself).
+
+- **`venues`** (`id text pk`, `name`, `asset_classes text[]`, `notes`,
+  `created_at`) — seeded with one row, `BYBIT`. A CHECK function restricts
+  `asset_classes` to `{CRYPTO_SPOT, FOREX}`.
+- **`instruments`** (`id uuid pk`, `canonical_id text unique`, `asset_class`,
+  `venue_id → venues`, `venue_symbol`, `base_asset`, `quote_asset`,
+  `settlement_asset`, `price_increment`, `size_increment`, `min_size`,
+  `min_notional` (nullable), `max_size` (nullable), `contract_multiplier`
+  (nullable), `pip_size` (nullable), `lot_size` (nullable), `allows_long`,
+  `allows_short`, `trading_calendar`, `is_active`, `metadata jsonb`,
+  `created_at`, `updated_at`; unique on `(venue_id, venue_symbol)`). CHECKs
+  restrict `asset_class` and `trading_calendar` to known values.
+- **`universes`** (`id uuid pk`, `key text unique`, `name`, `purpose`,
+  `asset_class`, `venue_id`, `enabled`, `notes`, timestamps). `purpose` is
+  an **organizational label only** (`PRODUCTION`/`PAPER`/`SHADOW`/
+  `HISTORICAL`) — it authorizes nothing; see §4/§5 rationale below.
+- **`universe_members`** (`id uuid pk`, `universe_id → universes`,
+  `instrument_id → instruments`, `research_enabled`, `shadow_enabled`,
+  `paper_enabled`, `added_at`, `updated_at`; unique on
+  `(universe_id, instrument_id)`). **No `live_enabled` column exists
+  anywhere in this schema** — LIVE has no authorization surface here at
+  all, by omission rather than a flag someone could flip.
+- **`instrument_research_eligibility`** (`instrument_id uuid pk →
+  instruments`, `status` CHECKed to `UNKNOWN`/`ELIGIBLE`/`INELIGIBLE`,
+  `reasons text[]`, `metrics jsonb`, `checked_at`, timestamps) — latest
+  snapshot per instrument, matching `lib/domain/eligibility.ts`.
+
+**Why new tables rather than reusing `instrument_metadata`/`strategy_versions`/
+`backtests`/`paper_research_sessions`:** `instrument_metadata` is a
+Bybit-symbol-keyed cache of live exchange rules refreshed every scan — it
+has no venue-independent identity, long/short policy, or calendar, and
+conflating "current exchange tick/qty rules" with "canonical instrument
+identity" would mix two different lifecycles. `strategy_versions`/
+`signals`/`trades` describe strategy execution, not which markets exist.
+`backtests`/`paper_research_sessions` describe a study over a range or a
+live authorization window for one strategy version, not universe
+membership. Full rationale is in the migration file's header comment.
+
+**RLS:** every new table has `authenticated_read` (select, any signed-in
+user — matching the existing pattern for reference/market data). Mutation
+on `instruments`/`universes`/`universe_members`/
+`instrument_research_eligibility` is restricted to the `owner` JWT role
+(`app_metadata->>'role' = 'owner'`, matching the existing owner/guest
+pattern). `venues` has no mutation policy yet — deliberately: adding a real
+venue is a significant, deliberate act with no UI in this checkpoint, so
+there's nothing routine to authorize. The scanner service role gets no
+grants on any of these five tables — nothing reads or writes them from a
+job yet.
+
+**Validated locally** (never against the live project): the DDL and seed
+statements were applied to a throwaway local PostgreSQL 16 database
+(pgcrypto in place of Supabase's `gen_random_uuid()`/`auth` extensions,
+which don't exist outside a real Supabase project). Confirmed: every
+statement applies without error; re-running the same DDL+seed block is a
+no-op (`CREATE TABLE ... IF NOT EXISTS`, every `INSERT` is `ON CONFLICT ...
+DO NOTHING`); the `asset_class`/`purpose` CHECK constraints reject invalid
+values. The RLS/policy block (which needs `auth.jwt()` and the
+`authenticated` role that only exist inside a real Supabase project) was
+reviewed against the already-deployed pattern in
+`supabase/migrations/20260913111342_owner_guest_access.sql` rather than
+executed locally.
+
+### 5. Migration file path
+
+`supabase/migrations/20260914130000_multi_market_universe.sql` — **proposed,
+not applied.**
+
+### 6-7. Initial crypto instruments found on Bybit / historical coverage
+
+**Not verified from this sandbox.** Outbound requests to `api.bybit.com`
+are geo-blocked here — the identical CloudFront restriction
+`lib/bybit/client.ts` already documents and works around only via
+production's Vercel function region:
+
+```
+$ curl https://api.bybit.com/v5/market/instruments-info?category=spot&symbol=SOLUSDT
+{"error":"The Amazon CloudFront distribution is configured to block access from your country"}
+```
+
+So: BTC/USDT and ETH/USDT are known-good (they are the live, currently
+trading V1 production pair). SOL/USDT, XRP/USDT, and BNB/USDT are seeded
+into the migration from the CLAUDE.md-provided candidate list only, each
+marked `metadata.verifiedOnVenue: false` and with an
+`instrument_research_eligibility` row of `status = 'UNKNOWN'`, reason
+`NOT_YET_CHECKED_AGAINST_LIVE_VENUE` — not claimed as confirmed. Historical
+candle-coverage per instrument is equally unchecked for the same reason.
+`lib/domain/discovery/bybit-instrument-discovery.ts`'s
+`discoverBybitSpotInstruments()` / `checkBybitResearchEligibility()` are
+the capability to run this for real from the deployed environment (same
+"not verified from the development session" situation already true of
+Milestone 3's live news-feed/Qwen calls, per `TASKS.md`).
+
+### 8. Research eligibility status/reasons
+
+All five seeded instruments: `UNKNOWN`, reason `NOT_YET_CHECKED_AGAINST_LIVE_VENUE`
+— by design, since no live discovery ran. `lib/domain/eligibility.ts`
+classifies UNKNOWN whenever a required metric (listing status, history
+coverage, a defensible turnover threshold, or turnover itself) is missing,
+and only ever returns INELIGIBLE for an explicit, named reason (leveraged
+token, stablecoin-vs-stablecoin, not actively trading, insufficient
+history, insufficient turnover) — never a fabricated ELIGIBLE.
+
+### 9. Repository/domain changes
+
+- `lib/domain/eligibility.ts`, `lib/domain/discovery/bybit-instrument-discovery.ts`,
+  `lib/domain/universe.ts` (`UniverseRepository`, `InMemoryUniverseRepository`),
+  `lib/domain/repository/supabase-universe-repository.ts`
+  (`SupabaseUniverseRepository` — untyped against the generated `Database`
+  type on purpose, since the new tables aren't in it yet; switch to
+  `SupabaseClient<Database>` once the migration is applied and types are
+  regenerated).
+- Additive-only changes to `lib/bybit/client.ts` (`listSpotInstruments()`,
+  `getListingStatus()`) and `lib/bybit/types.ts` (`Ticker.turnover24h`).
+  `getInstrumentMetadata`/`getCandles`/`getTicker`'s existing return values
+  are unchanged in every previously-existing field.
+- `SupabaseUniverseRepository.listUniverseMembers` issues exactly one
+  query with an embedded join regardless of member count (asserted by a
+  call-count test) — no N+1 as the universe grows.
+
+### 10. UI changes
+
+**None.** Per instruction ("if adding this UI materially expands the
+checkpoint, implement the backend and domain model first... do not
+sacrifice architecture quality to finish a settings page"): the schema
+doesn't exist live yet, so a Settings → Markets page would either be inert
+or would have to fake data. Backend/domain is done; the UI is a clean,
+small follow-up once the migration is reviewed and applied.
+
+### 11-13. Tests / typecheck / lint
+
+- 500/500 tests passing (461 → 500; 39 net-new): eligibility classifier,
+  discovery heuristics + venue-neutral mapping, in-memory and Supabase
+  repository behavior (research/paper isolation, batch loading, no-N+1),
+  fake-forex-fixture universe compatibility with zero schema change,
+  migration static-safety checks, and a Strategy V1 config regression
+  guard.
+- `npm run typecheck`: clean.
+- `npm run lint`: clean — same 2 pre-existing warnings as Checkpoint 1, no
+  new ones.
+- `npm run build`: clean.
+
+### 14. Confirmation: V1 production code unchanged
+
+Nothing in `lib/strategy/v1/`, `app/api/jobs/scan/route.ts`,
+`lib/trading/`, or `lib/risk/` was touched. `STRATEGY_V1_PARAMS.symbols`
+is asserted unchanged (`["BTCUSDT", "ETHUSDT"]`) by
+`lib/domain/__tests__/v1-production-unchanged.test.ts`. The only edits to
+previously-existing files are the two additive changes to
+`lib/bybit/client.ts`/`types.ts` above, neither of which alters an
+existing field or function signature that V1 depends on (verified by the
+full existing test suite staying green, including the Checkpoint 1
+parity tests).
+
+### 15. Confirmation: current 14-day experiment unchanged
+
+Not referenced by anything in this checkpoint. No table, column, or code
+path added here reads or writes `paper_research_sessions`,
+`system_settings`, or any `signals`/`trades` row.
+
+### 16. Confirmation: SOL/XRP/BNB cannot PAPER trade
+
+Structurally, not just by convention: the migration's seed INSERT sets
+`paper_enabled = false` for every one of the five seeded instruments,
+including BTC/ETH (whose actual PAPER trading continues to come solely
+from the frozen V1 path, not this table). No code anywhere reads
+`universe_members.paper_enabled` for authorization yet — no strategy v2+
+exists to read it. A static test
+(`lib/domain/__tests__/migration-safety.test.ts`) asserts the migration
+file contains no statement setting `paper_enabled = true`.
+
+### 17. Confirmation: LIVE remains disabled
+
+Unchanged and re-verified: `system_settings.live_trading_enabled`'s CHECK,
+the `trades`/`orders` CHECK constraints forbidding `trading_mode = 'LIVE'`,
+and `lib/risk/engine.ts`'s unconditional refusal are all untouched by this
+checkpoint. The new schema goes further by omission: it has no
+`live_enabled` column at all on any table, so there is nothing for a
+future bug to accidentally read as an authorization. Asserted by a static
+test that the migration declares no such column.
+
+### Outstanding for Checkpoint 3+
+
+Strategy families (v2-trb etc.), the research engine (holdout/
+walk-forward/cost-stress/multiple-testing), shadow forward, portfolio
+risk/correlation, real forex connectivity, and the Settings → Markets UI
+are all still not implemented — unchanged from Checkpoint 1's list, since
+this checkpoint's scope was explicitly the universe/schema layer only.
