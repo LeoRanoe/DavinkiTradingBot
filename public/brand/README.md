@@ -1,23 +1,25 @@
 # Brand assets
 
-`davinki-mark.svg` is a **placeholder** - a simple vector approximation of the
-Davinki "D" mark (uses `currentColor`, so it inherits text color and works in
-both themes). It is not the real logo file.
+The real Davinki Trading logo, as supplied by the owner
+(`image-1789384560347.png` in the repo root, commit `abcb0b5`).
 
-To use the real Davinki Trading logo, replace it with the actual asset:
+- `davinki-mark.png` — the "D" icon alone, cropped pixel-for-pixel from the
+  source file (no redrawing), transparent background, white artwork.
+  Used at small sizes: sidebar, login is the wordmark instead (see below).
+- `davinki-wordmark.png` — the full lockup (icon + "Davinki" + "TRADING"),
+  also cropped directly from the source, used on the login screen where
+  there's room for it.
+- `app/favicon.ico` — generated from `davinki-mark.png` composited onto a
+  small dark circular backdrop (the artwork itself is untouched; the
+  backdrop only exists so the icon stays legible in a light browser tab
+  bar, the same convention the placeholder favicon it replaced used).
 
-- `public/brand/davinki-mark.svg` — the "D" mark alone, square, transparent
-  background. Used at small sizes (sidebar, favicon), so keep it simple at
-  16-32px. SVG preferred; a transparent PNG at `davinki-mark.png` works too
-  (update the `src` in `components/dashboard/brand-mark.tsx` accordingly).
-- `public/brand/davinki-wordmark.svg` (optional) — full lockup (mark +
-  "Davinki Trading" text), for surfaces with more room, like the login
-  screen. Not required: the app currently sets the wordmark as text next to
-  `davinki-mark.svg`, which reads correctly with the placeholder and with a
-  transparent-background real mark.
+Both PNGs are white-on-transparent. `components/dashboard/brand-mark.tsx`
+and `app/login/page.tsx` apply `invert dark:invert-0` so the mark still
+reads correctly against the light theme's white background - that's a
+CSS filter on screen, the files on disk are never modified.
 
-After adding the real file(s), also regenerate `app/favicon.ico` from the
-mark (a 32x32/48x48 ICO) so the browser tab matches.
-
-No other code changes are needed - `components/dashboard/brand-mark.tsx` and
-the login page already reference these paths.
+If the owner supplies a different/updated logo later, replace
+`davinki-mark.png` and `davinki-wordmark.png` with the new crops (or drop
+in an SVG and update the `src` in `brand-mark.tsx` and `login/page.tsx`
+accordingly) and regenerate `app/favicon.ico` from the new mark.

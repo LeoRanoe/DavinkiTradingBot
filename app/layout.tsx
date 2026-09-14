@@ -18,9 +18,8 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Davinki Trading",
   description: "Personal trading operations, research, and PAPER execution console.",
-  icons: {
-    icon: [{ url: "/brand/davinki-mark.svg", type: "image/svg+xml" }, { url: "/favicon.ico" }],
-  },
+  // app/favicon.ico (a dark badge with the Davinki mark) is picked up
+  // automatically by Next.js file convention - no explicit icons entry needed.
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { BrandMark } from "@/components/dashboard/brand-mark";
+import Image from "next/image";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -34,9 +34,15 @@ export default function LoginPage() {
   return (
     <div className="flex min-h-svh items-center justify-center px-4">
       <div className="w-full max-w-sm">
-        <div className="mb-8 flex flex-col items-center gap-2">
-          <BrandMark size={32} />
-          <span className="text-sm font-semibold tracking-tight">Davinki Trading</span>
+        <div className="mb-8 flex justify-center">
+          <Image
+            src="/brand/davinki-wordmark.png"
+            alt="Davinki Trading"
+            width={160}
+            height={140}
+            className="invert dark:invert-0 h-auto w-40"
+            priority
+          />
         </div>
         <form onSubmit={handleSignIn} className="flex flex-col gap-4">
           {error ? (

@@ -2,17 +2,21 @@ import Image from "next/image";
 import { cn } from "@/lib/utils";
 
 /**
- * Davinki "D" mark. Reads `public/brand/davinki-mark.svg` - see
- * `public/brand/README.md` for how to swap in the real logo asset.
+ * Davinki "D" mark - `public/brand/davinki-mark.png`, cropped from the
+ * owner-supplied logo (public/brand/README.md documents provenance).
+ * The source art is white-on-transparent, so it reads correctly against
+ * the app's dark theme with no filter; `invert dark:invert-0` flips it to
+ * dark-on-transparent for the light theme without touching the asset
+ * itself.
  */
 export function BrandMark({ size = 22, className }: { size?: number; className?: string }) {
   return (
     <Image
-      src="/brand/davinki-mark.svg"
+      src="/brand/davinki-mark.png"
       alt=""
       width={size}
       height={size}
-      className={cn("shrink-0", className)}
+      className={cn("invert dark:invert-0 shrink-0", className)}
       priority
     />
   );
