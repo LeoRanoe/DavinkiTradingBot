@@ -833,6 +833,69 @@ export type Database = {
           },
         ]
       }
+      paper_research_sessions: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          ended_at: string | null
+          ended_notified_at: string | null
+          ends_at: string
+          id: string
+          label: string | null
+          planned_days: number
+          started_at: string
+          starting_equity: number
+          status: string
+          strategy_version_id: string | null
+          target_equity: number | null
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          ended_at?: string | null
+          ended_notified_at?: string | null
+          ends_at: string
+          id?: string
+          label?: string | null
+          planned_days: number
+          started_at: string
+          starting_equity: number
+          status?: string
+          strategy_version_id?: string | null
+          target_equity?: number | null
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          ended_at?: string | null
+          ended_notified_at?: string | null
+          ends_at?: string
+          id?: string
+          label?: string | null
+          planned_days?: number
+          started_at?: string
+          starting_equity?: number
+          status?: string
+          strategy_version_id?: string | null
+          target_equity?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "paper_research_sessions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "paper_research_sessions_strategy_version_id_fkey"
+            columns: ["strategy_version_id"]
+            isOneToOne: false
+            referencedRelation: "strategy_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       portfolio_snapshots: {
         Row: {
           balance: number
@@ -1017,6 +1080,7 @@ export type Database = {
           regime: string
           rejection_detail: string | null
           rejection_reason: string | null
+          research_session_id: string | null
           risk_reward: number | null
           risk_snapshot: Json | null
           score: number
@@ -1057,6 +1121,7 @@ export type Database = {
           regime: string
           rejection_detail?: string | null
           rejection_reason?: string | null
+          research_session_id?: string | null
           risk_reward?: number | null
           risk_snapshot?: Json | null
           score: number
@@ -1097,6 +1162,7 @@ export type Database = {
           regime?: string
           rejection_detail?: string | null
           rejection_reason?: string | null
+          research_session_id?: string | null
           risk_reward?: number | null
           risk_snapshot?: Json | null
           score?: number
@@ -1110,6 +1176,13 @@ export type Database = {
           volatility_state?: string | null
         }
         Relationships: [
+          {
+            foreignKeyName: "signals_research_session_id_fkey"
+            columns: ["research_session_id"]
+            isOneToOne: false
+            referencedRelation: "paper_research_sessions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "signals_strategy_version_id_fkey"
             columns: ["strategy_version_id"]
@@ -1426,6 +1499,7 @@ export type Database = {
           qty: number | null
           r_multiple: number | null
           rejection_reason: string | null
+          research_session_id: string | null
           risk_amount: number | null
           risk_budget: number | null
           risk_reward: number | null
@@ -1463,6 +1537,7 @@ export type Database = {
           qty?: number | null
           r_multiple?: number | null
           rejection_reason?: string | null
+          research_session_id?: string | null
           risk_amount?: number | null
           risk_budget?: number | null
           risk_reward?: number | null
@@ -1500,6 +1575,7 @@ export type Database = {
           qty?: number | null
           r_multiple?: number | null
           rejection_reason?: string | null
+          research_session_id?: string | null
           risk_amount?: number | null
           risk_budget?: number | null
           risk_reward?: number | null
@@ -1514,6 +1590,13 @@ export type Database = {
           trading_mode?: Database["public"]["Enums"]["trading_mode"]
         }
         Relationships: [
+          {
+            foreignKeyName: "trades_research_session_id_fkey"
+            columns: ["research_session_id"]
+            isOneToOne: false
+            referencedRelation: "paper_research_sessions"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "trades_signal_id_fkey"
             columns: ["signal_id"]

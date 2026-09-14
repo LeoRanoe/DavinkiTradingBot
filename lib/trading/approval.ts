@@ -8,9 +8,31 @@ import { buildCandidateForScan } from "@/lib/candidates/from-settings";
 import { reconstructScoreResult, type SignalRow } from "@/lib/candidates/persistence";
 import type { TradeCandidate } from "@/lib/candidates/types";
 import type { Database } from "@/lib/supabase/database.types";
+import { isStrategyEligibleForPaper } from "@/lib/research/eligibility";
+import { isResearchWindowActive, type ResearchWindow } from "@/lib/research/window";
 import { computeOpenFill } from "./settlement";
 
-export type ApprovalSource = "TELEGRAM" | "DASHBOARD";
+/**
+ * Where the authorization to execute came from.
+ *
+ * TELEGRAM / DASHBOARD - the owner individually approved this candidate.
+ * AUTO                 - an active PAPER research window authorized it under
+ *                        the owner's configured AUTO policy. Deliberately NOT
+ *                        called "owner approved": the owner enabled a policy,
+ *                        they did not decide this trade. `owner_decision` is
+ *                        left NULL for AUTO so the two can never be conflated
+ *                        in analysis.
+ *
+ * AUTO is ONLY an authorization source. It is not a faster path, not a
+ * reduced-checks path, and not a second engine: every source below runs this
+ * one function and therefore the identical revalidation pipeline.
+ */
+export type ApprovalSource = "TELEGRAM" | "DASHBOARD" | "AUTO";
+
+/** True when the source is a policy rather than an individual owner decision. */
+export function isAutomatedSource(source: ApprovalSource): boolean {
+  return source === "AUTO";
+}
 
 export type ApprovalResult =
   | { kind: "EXECUTED"; tradeId: string; candidate: TradeCandidate }
@@ -62,6 +84,14 @@ export interface ApprovalStore {
   insertTrade(row: TradeInsert): Promise<InsertTradeResult>;
   insertTradeEvent(tradeId: string, eventType: string, payload: Record<string, unknown>): Promise<void>;
   loadSettings(): Promise<OwnerRiskSettings>;
+  /**
+   * The current PAPER research window, or null when none exists. Read on
+   * every execution rather than passed in, so the executor decides strategy
+   * eligibility from persisted server state at the moment of execution - a
+   * window that closed between candidate creation and approval must block the
+   * trade, not be remembered as open.
+   */
+  loadResearchWindow(): Promise<ResearchWindow | null>;
   loadStrategyVersion(strategyVersionId: string): Promise<{ status: string; versionLabel: string } | null>;
   loadInstrument(symbol: string): Promise<InstrumentRules | null>;
   loadAccount(mode: TradingMode): Promise<AccountState>;
@@ -152,8 +182,42 @@ export async function approveCandidate(
   }
 
   const strategyVersion = await store.loadStrategyVersion(claimed.strategy_version_id);
-  const strategyApproved =
-    strategyVersion?.status === "PAPER_APPROVED" || strategyVersion?.status === "DEMO_APPROVED";
+
+  // Strategy eligibility comes from ONE helper, shared with the scanner, so
+  // the two can never disagree about whether this strategy may execute. A
+  // DRAFT strategy passes only while a PAPER research window is genuinely
+  // open right now - re-read here rather than trusted from candidate time, so
+  // a window that closed in between blocks the trade.
+  const researchWindow = await store.loadResearchWindow();
+  const eligibility = isStrategyEligibleForPaper({
+    strategyStatus: strategyVersion?.status,
+    tradingMode: settings.tradingMode,
+    researchWindow,
+    now: nowMs,
+  });
+
+  if (!eligibility.eligible) {
+    return reject("STRATEGY_NOT_APPROVED", eligibility.detail);
+  }
+
+  // Only a trade actually authorized by the research window carries its tag,
+  // so the 14-day run can be analyzed in isolation and a PAPER_APPROVED
+  // strategy's trades are never silently folded into research evidence.
+  const researchSessionId =
+    eligibility.basis === "PAPER_RESEARCH" && researchWindow ? researchWindow.id : null;
+
+  // Defense in depth. The scanner already refuses to invoke AUTO outside an
+  // active window (see lib/research/policy.ts), but an automated execution
+  // must never be able to open a position on the strength of a caller's
+  // assertion alone. A stale in-flight AUTO request that arrives after the
+  // window closed is refused here, at the executor, against freshly read
+  // state - the same way approval requests are never trusted to be current.
+  if (source === "AUTO" && !isResearchWindowActive(researchWindow, nowMs)) {
+    return reject(
+      "STRATEGY_NOT_APPROVED",
+      "Automatic execution was requested but no PAPER research window is active. The automatic research period has ended; approval is required again.",
+    );
+  }
 
   const instrument = await store.loadInstrument(claimed.symbol);
   if (!instrument) {
@@ -207,7 +271,9 @@ export async function approveCandidate(
     account,
     instrument,
     settings,
-    strategyApproved,
+    // Already decided above by the shared eligibility helper, which is the
+    // only place this question is answered for either caller.
+    strategyApproved: eligibility.eligible,
   });
 
   if (revalidated.kind === "REJECTED") {
@@ -223,6 +289,7 @@ export async function approveCandidate(
     signal_id: signalId,
     strategy_version_id: claimed.strategy_version_id,
     trading_mode: "PAPER",
+    research_session_id: researchSessionId,
     symbol: claimed.symbol,
     side: "LONG",
     status: "OPEN",
@@ -265,14 +332,23 @@ export async function approveCandidate(
     signalId,
     source,
     nowIso,
+    // For AUTO this is time-to-execution, not a human's deliberation time.
     approvalDelayMs: Math.max(0, nowMs - createdAtMs),
   });
 
-  await store.audit(source.toLowerCase(), "paper_position_opened", {
-    signalId,
-    tradeId: inserted.tradeId,
-    symbol: claimed.symbol,
-  });
+  await store.audit(
+    source.toLowerCase(),
+    // Named for what actually happened. An automatically executed candidate
+    // must never be searchable as though the owner approved it.
+    source === "AUTO" ? "paper_auto_execution" : "paper_position_opened",
+    {
+      signalId,
+      tradeId: inserted.tradeId,
+      symbol: claimed.symbol,
+      executionBasis: eligibility.basis,
+      researchSessionId,
+    },
+  );
 
   return { kind: "EXECUTED", tradeId: inserted.tradeId, candidate };
 }

@@ -14,6 +14,12 @@ import { buildCandidateForScan } from "@/lib/candidates/from-settings";
 import { buildSignalRow } from "@/lib/candidates/persistence";
 import { INITIAL_PAPER_EQUITY, riskSettingsFromRow } from "@/lib/settings/risk-settings";
 import { getAppUrl } from "@/lib/config/env";
+import { loadCurrentResearchWindow } from "@/lib/research/store";
+import { reconcileResearchExpiry } from "@/lib/research/expiry";
+import { effectiveExecutionPolicy } from "@/lib/research/policy";
+import { isStrategyEligibleForPaper } from "@/lib/research/eligibility";
+import { formatResearchDay } from "@/lib/research/window";
+import { executeCandidate } from "@/lib/trading/execute";
 import { loadRecentNewsEvents } from "@/lib/news/store";
 import { buildCandidateNewsContext, DEFAULT_NEWS_WINDOW_MS } from "@/lib/news/candidate-context";
 import type { CandidateNewsContext } from "@/lib/news/types";
@@ -23,6 +29,7 @@ import {
   sendTelegramMessage,
   formatCandidateMessage,
   formatTradeClosedMessage,
+  formatAutoPositionOpenedMessage,
   buildCandidateKeyboard,
 } from "@/lib/telegram/client";
 
@@ -108,18 +115,68 @@ export async function POST(request: NextRequest) {
   const { data: settingsRow } = await admin.from("system_settings").select("*").eq("id", true).single();
   const settings = riskSettingsFromRow(settingsRow);
 
-  // Only a strategy version explicitly approved for the active mode may
-  // produce an actionable candidate. A DRAFT version still gets a complete,
-  // deterministic evaluation - it is recorded as a typed
-  // STRATEGY_NOT_APPROVED rejection rather than silently skipped.
-  const strategyApproved =
-    strategyVersion.status === "PAPER_APPROVED" || strategyVersion.status === "DEMO_APPROVED";
+  const scanStartedMs = Date.now();
 
   let recordsProcessed = 0;
   let signalsFound = 0;
   let candidatesBuilt = 0;
   let candidatesRejected = 0;
   const errors: string[] = [];
+  let autoExecuted = 0;
+  let autoRejected = 0;
+
+  // ---------------------------------------------------------------------
+  // PHASE 0 - reconcile the research window BEFORE anything can execute.
+  //
+  // If the 14-day window elapsed since the last run, it is expired here, the
+  // stored policy is reverted to APPROVAL_REQUIRED and the owner is notified
+  // exactly once - all before a single candidate is evaluated below. So the
+  // very first scan after day 14 already behaves as an approval-mode scan.
+  //
+  // Correctness does not depend on this having run: `effectiveExecutionPolicy`
+  // refuses AUTO on elapsed time alone. This makes the stored state agree.
+  // ---------------------------------------------------------------------
+  let researchWindow = await loadCurrentResearchWindow(admin).catch(() => null);
+  try {
+    const expiry = await reconcileResearchExpiry(admin, researchWindow, scanStartedMs);
+    if (expiry.kind === "EXPIRED" || expiry.kind === "ALREADY_HANDLED") {
+      researchWindow = await loadCurrentResearchWindow(admin).catch(() => null);
+    }
+  } catch (expiryErr) {
+    // A failure here must never stop position management or candidate
+    // generation. The window is still treated as closed by the policy check.
+    errors.push(`research expiry: ${(expiryErr as Error).message}`);
+  }
+
+  // Strategy eligibility comes from ONE shared helper, also used by the
+  // executor, so the scanner can never advertise a candidate the executor
+  // would refuse. A DRAFT version is eligible ONLY inside an active research
+  // window; outside one it still gets a complete deterministic evaluation and
+  // is recorded as a typed STRATEGY_NOT_APPROVED rejection, never skipped.
+  const eligibility = isStrategyEligibleForPaper({
+    strategyStatus: strategyVersion.status,
+    tradingMode: settings.tradingMode,
+    researchWindow,
+    now: scanStartedMs,
+  });
+  const strategyApproved = eligibility.eligible;
+
+  // What the system will ACTUALLY do, which is not simply what the owner
+  // configured: AUTO additionally requires PAPER and a live research window.
+  const effectivePolicy = effectiveExecutionPolicy({
+    configuredPolicy: settings.executionPolicy,
+    tradingMode: settings.tradingMode,
+    researchWindow,
+    now: scanStartedMs,
+  });
+  const autoExecutionActive = effectivePolicy.policy === "AUTO";
+
+  // Only tag rows the research window actually authorized, so a
+  // PAPER_APPROVED strategy's trades never enter the research evidence set.
+  const researchSessionId =
+    eligibility.basis === "PAPER_RESEARCH" && researchWindow ? researchWindow.id : null;
+  const researchDay = researchWindow ? formatResearchDay(researchWindow, scanStartedMs) : null;
+
 
   // ---------------------------------------------------------------------
   // PHASE 1 - manage what is already open.
@@ -138,7 +195,15 @@ export async function POST(request: NextRequest) {
   errors.push(...positionOutcome.errors);
 
   for (const closed of positionOutcome.closed) {
-    await sendTelegramMessage(formatTradeClosedMessage(closed, STRATEGY_V1_VERSION_LABEL)).catch(() => undefined);
+    // Described the same way it was opened: a position opened under the
+    // research window is reported as an AUTO result, read from the trade
+    // itself rather than from whatever policy happens to be in force now.
+    await sendTelegramMessage(
+      formatTradeClosedMessage(closed, STRATEGY_V1_VERSION_LABEL, {
+        automatic: Boolean(closed.researchSessionId),
+        researchDay: closed.researchSessionId ? researchDay : null,
+      }),
+    ).catch(() => undefined);
     // Settlement and the equity snapshot already committed. Learning is
     // post-settlement and best-effort: a research/AI failure cannot undo an
     // actual PAPER result or destabilize the scan.
@@ -353,6 +418,10 @@ export async function POST(request: NextRequest) {
         .from("signals")
         .insert({
           id: signalId,
+          // Tagged at creation so the funnel (candidates, risk-valid,
+          // executed) can be measured for the research period, not just the
+          // trades that came out of it.
+          research_session_id: researchSessionId,
           ...buildSignalRow({
             strategyVersionId: strategyVersion.id,
             symbol,
@@ -432,10 +501,54 @@ export async function POST(request: NextRequest) {
             ? `$${settings.fixedRiskAmount.toFixed(2)} fixed`
             : `${(settings.maxRiskPerTradePct * 100).toFixed(2)}% of equity`;
 
-        await sendTelegramMessage(
-          formatCandidateMessage({ candidate, riskModeLabel, validForMinutes, news: newsContext }),
-          { replyMarkup: buildCandidateKeyboard(insertedSignal.id, getAppUrl()) },
-        ).catch(() => undefined);
+        if (autoExecutionActive) {
+          // AUTO: the candidate is already persisted above. Execution goes
+          // through the SAME function the owner's APPROVE button calls, so it
+          // re-claims the candidate atomically and re-validates everything
+          // against fresh market data before anything opens. The scan code
+          // never inserts a trade itself.
+          //
+          // Notification happens strictly AFTER execution has committed, and
+          // its failure is swallowed: a Telegram outage must not duplicate,
+          // unwind or cancel a correctly persisted position.
+          const executed = await executeCandidate(insertedSignal.id, "AUTO", admin).catch((err) => ({
+            kind: "REJECTED" as const,
+            reason: "MISSING_MARKET_DATA" as const,
+            detail: (err as Error).message,
+          }));
+
+          if (executed.kind === "EXECUTED") {
+            autoExecuted += 1;
+            await sendTelegramMessage(
+              formatAutoPositionOpenedMessage({
+                symbol: candidate.symbol,
+                side: candidate.side,
+                entryPrice: candidate.position.referencePrice,
+                qty: candidate.risk.roundedQuantity,
+                stopPrice: candidate.position.stopPrice,
+                targetPrice: candidate.position.targetPrice,
+                modeledMaxLoss: candidate.risk.modeledMaxLoss,
+                positionNotional: candidate.risk.positionNotional,
+                riskReward: candidate.position.riskReward,
+                strategyLabel: STRATEGY_V1_VERSION_LABEL,
+                researchDay,
+              }),
+            ).catch(() => undefined);
+          } else if (executed.kind === "REJECTED") {
+            // The exact deterministic reason is already persisted on the
+            // signal row by the executor. Counted here, not notified: a
+            // candidate that failed revalidation is routine and notifying on
+            // it would make Telegram unusable.
+            autoRejected += 1;
+          }
+        } else {
+          // APPROVAL_REQUIRED: unchanged behaviour. The owner decides, and
+          // approving re-runs this identical pipeline before anything opens.
+          await sendTelegramMessage(
+            formatCandidateMessage({ candidate, riskModeLabel, validForMinutes, news: newsContext }),
+            { replyMarkup: buildCandidateKeyboard(insertedSignal.id, getAppUrl()) },
+          ).catch(() => undefined);
+        }
       }
     } catch (err) {
       errors.push(`${symbol}: ${(err as Error).message}`);
@@ -452,6 +565,10 @@ export async function POST(request: NextRequest) {
     candidatesBuilt,
     candidatesRejected,
     tradesClosed,
+    executionPolicy: effectivePolicy.policy,
+    autoExecuted,
+    autoRejected,
+    researchSessionId,
   });
 
   return NextResponse.json({
@@ -461,6 +578,13 @@ export async function POST(request: NextRequest) {
     candidatesBuilt,
     candidatesRejected,
     tradesClosed,
+    // Reported so a scan's behaviour is never ambiguous after the fact:
+    // configured policy alone does not tell you whether AUTO was in force.
+    executionPolicy: effectivePolicy.policy,
+    configuredExecutionPolicy: settings.executionPolicy,
+    researchWindowActive: Boolean(researchSessionId),
+    autoExecuted,
+    autoRejected,
     errors,
   });
 }

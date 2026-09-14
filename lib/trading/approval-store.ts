@@ -4,6 +4,7 @@ import type { AccountState, InstrumentRules } from "@/lib/risk/types";
 import type { TradingMode } from "@/lib/types/trading-mode";
 import { INITIAL_PAPER_EQUITY, riskSettingsFromRow, type OwnerRiskSettings } from "@/lib/settings/risk-settings";
 import type { SignalRow } from "@/lib/candidates/persistence";
+import { loadCurrentResearchWindow } from "@/lib/research/store";
 import { computeAccountState } from "./account-state";
 import type { ApprovalStore, ApprovalSource, InsertTradeResult, TradeInsert } from "./approval";
 
@@ -58,7 +59,12 @@ export function createApprovalStore(client: SupabaseClient<Database>): ApprovalS
         .from("signals")
         .update({
           approval_status: "APPROVED",
-          owner_decision: "APPROVED",
+          // `approval_status` records the EXECUTION state; `owner_decision`
+          // records whether a human decided. For AUTO no human did, so it
+          // stays null - writing "APPROVED" here would make automatic
+          // research trades indistinguishable from owner-approved ones in
+          // every later query and report.
+          owner_decision: source === "AUTO" ? null : "APPROVED",
           decision_at: nowIso,
           decision_source: source,
           approval_delay_ms: approvalDelayMs,
@@ -119,6 +125,10 @@ export function createApprovalStore(client: SupabaseClient<Database>): ApprovalS
     async loadSettings(): Promise<OwnerRiskSettings> {
       const { data } = await client.from("system_settings").select("*").eq("id", true).maybeSingle();
       return riskSettingsFromRow(data);
+    },
+
+    async loadResearchWindow() {
+      return loadCurrentResearchWindow(client);
     },
 
     async loadStrategyVersion(strategyVersionId) {

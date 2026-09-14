@@ -1,6 +1,7 @@
 import type { Candle } from "@/lib/bybit/types";
 import type { AccountState, InstrumentRules } from "@/lib/risk/types";
 import type { SignalRow } from "@/lib/candidates/persistence";
+import type { ResearchWindow } from "@/lib/research/window";
 import { DEFAULT_RISK_SETTINGS, type OwnerRiskSettings } from "@/lib/settings/risk-settings";
 import type { ApprovalStore, MarketDataPort, TradeInsert } from "../approval";
 import type { PositionStore, TradeRow } from "../position-manager";
@@ -26,11 +27,31 @@ export type FakeDb = {
   strategyVersion: { status: string; versionLabel: string } | null;
   instrument: InstrumentRules | null;
   account: AccountState;
+  researchWindow: ResearchWindow | null;
   failTradeInsert?: string;
 };
 
+/** A research window open around the fixtures' NOW, for AUTO/DRAFT suites. */
+export function makeResearchWindow(overrides: Partial<ResearchWindow> = {}): ResearchWindow {
+  const startedAt = new Date("2026-01-01T00:00:00Z").toISOString();
+  return {
+    id: TEST_RESEARCH_SESSION_ID,
+    startedAt,
+    endsAt: new Date(Date.parse(startedAt) + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    status: "ACTIVE",
+    plannedDays: 14,
+    startingEquity: 20,
+    targetEquity: 50,
+    strategyVersionId: TEST_STRATEGY_VERSION_ID,
+    label: "14-day PAPER research",
+    endedNotifiedAt: null,
+    ...overrides,
+  };
+}
+
 export const TEST_SIGNAL_ID = "11111111-2222-4333-8444-555555555555";
 export const TEST_STRATEGY_VERSION_ID = "99999999-8888-4777-8666-555555555555";
+export const TEST_RESEARCH_SESSION_ID = "77777777-6666-4555-8444-333333333333";
 
 export function makeInstrument(overrides: Partial<InstrumentRules> = {}): InstrumentRules {
   return {
@@ -103,6 +124,7 @@ export function makePendingSignal(overrides: Partial<SignalRow> = {}): SignalRow
     processed_at: null,
     news_risk: null,
     news_snapshot: null,
+    research_session_id: null,
     decision_snapshot: null,
     ...overrides,
   };
@@ -119,6 +141,9 @@ export function makeDb(overrides: Partial<FakeDb> = {}): FakeDb {
     strategyVersion: { status: "PAPER_APPROVED", versionLabel: "v1" },
     instrument: makeInstrument(),
     account: makeAccount(),
+    // No research window by default: the existing suites exercise a
+    // formally PAPER_APPROVED strategy, which must stay eligible without one.
+    researchWindow: null,
     ...overrides,
   };
 }
@@ -139,6 +164,9 @@ export function createFakeApprovalStore(db: FakeDb): ApprovalStore {
     async currentStatus(signalId) {
       return db.signals.get(signalId)?.approval_status ?? null;
     },
+    async loadResearchWindow() {
+      return db.researchWindow;
+    },
     async finalizeRejection({ signalId, status, reason, detail, nowIso }) {
       const row = db.signals.get(signalId);
       if (!row || row.approval_status !== "OPENING") return;
@@ -156,7 +184,9 @@ export function createFakeApprovalStore(db: FakeDb): ApprovalStore {
       db.signals.set(signalId, {
         ...row,
         approval_status: "APPROVED",
-        owner_decision: "APPROVED",
+        // Mirrors the Supabase adapter: AUTO is a policy authorization, so no
+        // owner decision is recorded for it.
+        owner_decision: source === "AUTO" ? null : "APPROVED",
         decision_at: nowIso,
         decision_source: source,
         approval_delay_ms: approvalDelayMs,
@@ -194,6 +224,7 @@ export function createFakeApprovalStore(db: FakeDb): ApprovalStore {
       db.trades.push({
         id,
         signal_id: row.signal_id ?? null,
+        research_session_id: row.research_session_id ?? null,
         strategy_version_id: row.strategy_version_id,
         trading_mode: row.trading_mode,
         symbol: row.symbol,

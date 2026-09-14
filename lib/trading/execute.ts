@@ -38,6 +38,32 @@ function sourceOf(actor: "dashboard" | "telegram"): ApprovalSource {
 }
 
 /**
+ * The generic deterministic execution entrypoint shared by TELEGRAM,
+ * DASHBOARD and AUTO.
+ *
+ * There is exactly one execution engine in this application. Whichever source
+ * calls in, control reaches `approveCandidate`, which performs the atomic
+ * claim, refetches the ticker and ATR, re-checks the entry range, expiry,
+ * volatility, risk sizing, exchange metadata, available balance, daily
+ * limits, the loss lock, the open-position limit, the min-order risk conflict
+ * and duplicate protection - against state read at that moment.
+ *
+ * AUTO therefore changes WHO may authorize execution and nothing about WHAT
+ * is checked. It is not a fast path and cannot skip a single gate above.
+ */
+export async function executeCandidate(
+  signalId: string,
+  source: ApprovalSource,
+  scopedClient?: SupabaseClient<Database>,
+): Promise<ApprovalResult> {
+  const client = scopedClient ?? createAdminClient();
+  return approveCandidate(signalId, source, {
+    store: createApprovalStore(client),
+    market: bybitMarketData,
+  });
+}
+
+/**
  * The single path that turns an approved candidate into a PAPER position,
  * used by BOTH the dashboard button and the Telegram callback.
  *
@@ -52,9 +78,7 @@ export async function approveAndExecuteSignal(
   scopedClient?: SupabaseClient<Database>,
 ): Promise<ApprovalResult> {
   const client = scopedClient ?? createAdminClient();
-  const store = createApprovalStore(client);
-
-  const result = await approveCandidate(signalId, sourceOf(actor), { store, market: bybitMarketData });
+  const result = await executeCandidate(signalId, sourceOf(actor), client);
 
   // Notifications are strictly secondary: execution state is already
   // committed at this point, so a Telegram failure can never re-open or

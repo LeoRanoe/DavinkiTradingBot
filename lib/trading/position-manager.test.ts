@@ -12,6 +12,7 @@ function withOpenPosition(db: FakeDb = makeDb()): FakeDb {
   db.trades.push({
     id: "trade-open",
     signal_id: "sig-1",
+    research_session_id: null,
     strategy_version_id: "strat-1",
     trading_mode: "PAPER",
     symbol: "BTCUSDT",

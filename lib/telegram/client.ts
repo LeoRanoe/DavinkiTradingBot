@@ -218,10 +218,67 @@ export function formatPositionOpenedMessage(input: {
   ].join("\n");
 }
 
+/**
+ * An automatically executed research position. Informational: it reports a
+ * decision already made and committed, so it carries no buttons and asks for
+ * nothing. Stating the research day and the DRAFT status on every message is
+ * deliberate - the owner should never have to remember which mode they are in
+ * or mistake research participation for a validated strategy.
+ */
+export function formatAutoPositionOpenedMessage(input: {
+  symbol: string;
+  side: string;
+  entryPrice: number;
+  qty: number;
+  stopPrice: number;
+  targetPrice: number;
+  modeledMaxLoss: number;
+  positionNotional: number;
+  riskReward: number;
+  strategyLabel: string;
+  researchDay: string | null;
+}): string {
+  return [
+    `AUTO PAPER POSITION OPENED - ${input.symbol}`,
+    "",
+    input.side,
+    "",
+    `Entry        ${price(input.entryPrice)}`,
+    `Stop         ${price(input.stopPrice)}`,
+    `Target       ${price(input.targetPrice)}`,
+    `Risk         ${money(input.modeledMaxLoss)}`,
+    `Position     ${money(input.positionNotional)}`,
+    `Quantity     ${input.qty}`,
+    `R/R          ${input.riskReward.toFixed(2)}`,
+    "",
+    `Strategy     ${input.strategyLabel} - PAPER RESEARCH (DRAFT)`,
+    ...(input.researchDay ? [`Research     ${input.researchDay}`] : []),
+    "",
+    "No action required. This was executed by the same deterministic risk and",
+    "revalidation checks the approval flow uses.",
+  ].join("\n");
+}
+
 /** The closed-position result. Factual, never celebratory. */
-export function formatTradeClosedMessage(closed: ClosedPosition, strategyLabel: string): string {
-  const header = closed.exitReason === "TARGET" ? "PAPER TARGET HIT" : "PAPER STOP HIT";
+export function formatTradeClosedMessage(
+  closed: ClosedPosition,
+  strategyLabel: string,
+  options?: { automatic?: boolean; researchDay?: string | null },
+): string {
+  const outcome = closed.exitReason === "TARGET" ? "TARGET HIT" : "STOP HIT";
+  const header = options?.automatic ? `AUTO PAPER ${outcome}` : `PAPER ${outcome}`;
   const sign = closed.netPnl >= 0 ? "+" : "";
+
+  // Excursions are only shown when the settlement layer actually measured
+  // them. An unmeasured excursion is omitted rather than printed as zero,
+  // which would read as "price never moved in your favour".
+  const excursions: string[] = [];
+  if (closed.mfeR !== null && closed.mfeR !== undefined) {
+    excursions.push(`MFE          ${closed.mfeR.toFixed(2)}R`);
+  }
+  if (closed.maeR !== null && closed.maeR !== undefined) {
+    excursions.push(`MAE          ${closed.maeR.toFixed(2)}R`);
+  }
 
   return [
     `${header} - ${closed.symbol}`,
@@ -232,8 +289,10 @@ export function formatTradeClosedMessage(closed: ClosedPosition, strategyLabel: 
     `R            ${sign}${closed.realizedR.toFixed(2)}R`,
     `Fees         ${money(closed.totalFees)}`,
     `Slippage     ${money(closed.realizedSlippage)}`,
+    ...excursions,
     `New equity   ${money(closed.equityAfter)}`,
     `Strategy     ${strategyLabel}`,
+    ...(options?.researchDay ? [`Research     ${options.researchDay}`] : []),
   ].join("\n");
 }
 

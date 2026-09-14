@@ -28,6 +28,13 @@ export type ClosedPosition = {
   maePrice?: number;
   mfeR?: number | null;
   maeR?: number | null;
+  /**
+   * The research window this position was opened under, if any. Carried
+   * through settlement so the close notification can describe the position
+   * the same way the open notification did, rather than guessing from
+   * whatever the execution policy happens to be at close time.
+   */
+  researchSessionId?: string | null;
 };
 
 export interface PositionStore {
@@ -223,6 +230,7 @@ export async function manageOpenPositions(deps: {
           equityAfter,
           openedAt: trade.opened_at,
           closedAt: closedAtIso,
+          researchSessionId: trade.research_session_id,
           ...excursions,
         });
 
