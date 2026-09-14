@@ -235,3 +235,62 @@ RLS, live-verification status, and everything still outstanding).
 - [ ] Settings → Markets UI deferred: per instruction, backend/domain first,
   UI as a small follow-up rather than sacrificing schema quality to ship a
   page against tables that don't exist yet.
+
+## Checkpoint 2 — pre-migration review fixes (not yet applied)
+
+A small correctness patch requested on review of commit
+`12ac0f43a24251602d543f9a70e83dc0db5baef9`, before any live migration. Full
+detail in `docs/BUILD_STATE.md`. All still schema-proposal-only; nothing
+applied to Supabase.
+
+- [x] `instrument_research_eligibility.checked_at`: nullable, no default
+  (was `not null default now()`, which stamped a fake "verified just now"
+  time on rows nobody had checked). Seed rows now leave it NULL.
+- [x] Separated research SELECTION from eligibility: added
+  `getEligibleResearchUniverse()` (fail-closed: universe enabled AND
+  member research-selected AND instrument active AND eligibility status
+  `ELIGIBLE`), backed by a shared pure helper
+  (`selectEligibleResearchInstruments`) so both `InMemoryUniverseRepository`
+  and `SupabaseUniverseRepository` apply the identical rule.
+  `getResearchUniverse()` keeps its original meaning ("owner-selected",
+  regardless of eligibility) so UI/config can still show an UNKNOWN
+  instrument.
+- [x] Removed fabricated exchange rules from canonical identity:
+  `Instrument.priceIncrement/sizeIncrement/minSize` are now optional and
+  ARE NOT populated by the crypto registry for any instrument, including
+  BTC/ETH. The DB columns are nullable with no default; the seed INSERT no
+  longer names them. Added `lib/domain/exchange-rules.ts` — a fail-closed
+  guard any future generic execution code must call instead of defaulting
+  a missing rule to 0/1.
+- [x] `UniverseDefinition` now carries `assetClass`/`venueId` (previously
+  read from the DB row and discarded); added a matching
+  `universes_asset_class_valid` CHECK (the column existed with no CHECK).
+- [x] Fixed `venues.asset_classes`' empty-array bug: `array_length(arr,1) >
+  0` returns NULL (not 0) for `{}`, and a NULL CHECK result is treated as
+  passing — so an empty array was silently admitted. Switched to
+  `cardinality(classes) > 0`.
+- [x] Every constraint-existence guard (`pg_constraint` lookup before
+  `ALTER TABLE ... ADD CONSTRAINT`) is now scoped with `conrelid =
+  'public.<table>'::regclass`, not `conname` alone.
+- [x] `VenueId` is now an open string type (`KNOWN_VENUE_IDS` provides
+  typo-safe constants for BYBIT/OANDA_FAKE/IBKR_FAKE) instead of a closed
+  union — adding a real venue no longer requires widening a core type.
+- [x] Renamed `CRYPTO_SPOT_LONG_ONLY_POLICY` → `PLATFORM_LONG_ONLY_POLICY`
+  (it could fire on a non-crypto, e.g. FOREX, instrument).
+  `Instrument.isActive` added (mirrors `instruments.is_active`), used by
+  the new fail-closed filter.
+- [x] Corrected two overclaiming comments: LIVE has no `live_enabled`
+  column anywhere in this schema (stronger than "a column exists and is
+  CHECKed false" — there's no column to check); `paper_enabled` has no
+  permanent CHECK forcing it false (a real future PAPER promotion must be
+  able to set it true) — its actual current safety is seed/default false +
+  owner-only RLS mutation + no execution consumer yet + a future explicit
+  approval step, stated as four independent, changeable layers rather than
+  one absolute guarantee.
+- [x] Added MANUAL VENUE EVIDENCE vs RUNTIME PROVIDER VERIFICATION language
+  to the migration's seed comment: the owner's manual web confirmation that
+  Bybit's Spot directory lists BTC/ETH/SOL/XRP/BNB does not flip
+  `metadata.verifiedOnVenue` or move eligibility out of `UNKNOWN` — only an
+  actual `discoverBybitSpotInstruments()` run from the deployed environment
+  may do that.
+- [x] 33 net-new tests (533 total, up from 500); typecheck/lint/build clean.

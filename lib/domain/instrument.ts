@@ -8,7 +8,21 @@
 
 export type AssetClass = "CRYPTO_SPOT" | "FOREX";
 
-export type VenueId = "BYBIT" | "OANDA_FAKE" | "IBKR_FAKE";
+/**
+ * Deliberately an open string type, not a closed union of every venue this
+ * platform might ever connect to (CLAUDE.md §41 "broker agnostic";
+ * Checkpoint 2 review §7). Adding a real future venue is an adapter
+ * implementation plus a `venues` DB row - it must never require widening a
+ * union type baked into the core instrument model. `KNOWN_VENUE_IDS` below
+ * exists for typo-safety in fixtures/tests, not to close the type.
+ */
+export type VenueId = string;
+
+export const KNOWN_VENUE_IDS = {
+  BYBIT: "BYBIT",
+  OANDA_FAKE: "OANDA_FAKE",
+  IBKR_FAKE: "IBKR_FAKE",
+} as const satisfies Record<string, VenueId>;
 
 /**
  * Stable, human-readable canonical identifier, e.g.
@@ -47,10 +61,22 @@ export interface Instrument {
   /** Currency the account/P&L is settled in for this instrument, e.g. "USDT", "USD". */
   settlementAsset: string;
 
-  priceIncrement: number;
-  sizeIncrement: number;
-  minSize: number;
-  maxSize: number | null;
+  /**
+   * Provider-dependent exchange/broker rules. Deliberately OPTIONAL
+   * (Checkpoint 2 review §3): the canonical instrument model is identity,
+   * not a cache of live, mutable exchange rules. The authoritative source
+   * for crypto spot remains `lib/bybit/client.ts getInstrumentMetadata()` +
+   * the `instrument_metadata` table, refreshed every scan - nothing here
+   * duplicates or guesses those values. Do not populate these fields with a
+   * placeholder; leave them undefined until a real provider call has
+   * verified them, and any execution code that needs them must fail
+   * closed on `undefined` rather than default to 0/1 (see
+   * lib/domain/exchange-rules.ts).
+   */
+  priceIncrement?: number;
+  sizeIncrement?: number;
+  minSize?: number;
+  maxSize?: number | null;
 
   /** Futures/CFD-style contract multiplier. Undefined for crypto spot / FX spot. */
   contractMultiplier?: number;
@@ -66,6 +92,9 @@ export interface Instrument {
   allowsShort: boolean;
 
   tradingCalendarId: "CRYPTO_24_7" | "FX_24_5";
+
+  /** Mirrors `instruments.is_active` (Checkpoint 2 review §2/§4) - used to exclude a delisted/retired instrument from any eligible research set. */
+  isActive: boolean;
 
   metadata?: Record<string, unknown>;
 }
@@ -86,6 +115,9 @@ export function assertLongOnlyPolicy(side: "LONG" | "SHORT", instrument: Pick<In
     return { allowed: false, reason: "INSTRUMENT_DOES_NOT_ALLOW_SHORT" };
   }
   // Even when an instrument's convention permits shorting (e.g. margin FX),
-  // current platform-wide policy is long-only across every asset class.
-  return { allowed: false, reason: "CRYPTO_SPOT_LONG_ONLY_POLICY" };
+  // current platform-wide policy is long-only across every asset class -
+  // hence a reason name with no "CRYPTO_SPOT" in it (Checkpoint 2 review §8:
+  // the old name was misleading on a non-crypto instrument, e.g. the FOREX
+  // fixtures below).
+  return { allowed: false, reason: "PLATFORM_LONG_ONLY_POLICY" };
 }

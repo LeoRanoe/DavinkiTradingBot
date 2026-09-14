@@ -1,4 +1,4 @@
-import { makeInstrumentId, type Instrument } from "../instrument";
+import { KNOWN_VENUE_IDS, makeInstrumentId, type Instrument } from "../instrument";
 
 /**
  * NOT a real forex data source. These are fixtures for
@@ -10,9 +10,9 @@ import { makeInstrumentId, type Instrument } from "../instrument";
  */
 export const FAKE_FOREX_INSTRUMENTS: readonly Instrument[] = [
   {
-    id: makeInstrumentId("FOREX", "OANDA_FAKE", "EUR", "USD"),
+    id: makeInstrumentId("FOREX", KNOWN_VENUE_IDS.OANDA_FAKE, "EUR", "USD"),
     assetClass: "FOREX",
-    venue: "OANDA_FAKE",
+    venue: KNOWN_VENUE_IDS.OANDA_FAKE,
     venueSymbol: "EUR_USD",
     baseAsset: "EUR",
     quoteAsset: "USD",
@@ -28,11 +28,12 @@ export const FAKE_FOREX_INSTRUMENTS: readonly Instrument[] = [
     allowsLong: true,
     allowsShort: true,
     tradingCalendarId: "FX_24_5",
+    isActive: true,
   },
   {
-    id: makeInstrumentId("FOREX", "OANDA_FAKE", "USD", "JPY"),
+    id: makeInstrumentId("FOREX", KNOWN_VENUE_IDS.OANDA_FAKE, "USD", "JPY"),
     assetClass: "FOREX",
-    venue: "OANDA_FAKE",
+    venue: KNOWN_VENUE_IDS.OANDA_FAKE,
     venueSymbol: "USD_JPY",
     baseAsset: "USD",
     quoteAsset: "JPY",
@@ -48,5 +49,6 @@ export const FAKE_FOREX_INSTRUMENTS: readonly Instrument[] = [
     allowsLong: true,
     allowsShort: true,
     tradingCalendarId: "FX_24_5",
+    isActive: true,
   },
 ] as const;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertLongOnlyPolicy, makeInstrumentId } from "../instrument";
+import { assertLongOnlyPolicy, KNOWN_VENUE_IDS, makeInstrumentId, type Instrument, type VenueId } from "../instrument";
 import { CRYPTO_SPOT_INSTRUMENTS } from "../instruments/crypto";
 import { FAKE_FOREX_INSTRUMENTS } from "../instruments/forex-fake";
 
@@ -29,7 +29,33 @@ describe("assertLongOnlyPolicy", () => {
     expect(eurusd.allowsShort).toBe(true); // the convention permits it...
     const decision = assertLongOnlyPolicy("SHORT", eurusd);
     expect(decision.allowed).toBe(false); // ...but platform policy still refuses it
-    expect(decision.reason).toBe("CRYPTO_SPOT_LONG_ONLY_POLICY");
+    expect(decision.reason).toBe("PLATFORM_LONG_ONLY_POLICY");
+  });
+});
+
+describe("VenueId is extensible (Checkpoint 2 review §7)", () => {
+  it("accepts a brand-new venue id with no type change - adding a real venue is data, not a union-widening edit", () => {
+    const futureVenue: VenueId = "KRAKEN"; // not in KNOWN_VENUE_IDS and never will be added there
+    const instrument: Instrument = {
+      id: makeInstrumentId("CRYPTO_SPOT", futureVenue, "BTC", "USD"),
+      assetClass: "CRYPTO_SPOT",
+      venue: futureVenue,
+      venueSymbol: "XBTUSD",
+      baseAsset: "BTC",
+      quoteAsset: "USD",
+      settlementAsset: "USD",
+      allowsLong: true,
+      allowsShort: false,
+      tradingCalendarId: "CRYPTO_24_7",
+      isActive: true,
+    };
+    expect(instrument.venue).toBe("KRAKEN");
+  });
+
+  it("KNOWN_VENUE_IDS still names the venues fixtures/tests actually use, for typo-safety", () => {
+    expect(KNOWN_VENUE_IDS.BYBIT).toBe("BYBIT");
+    expect(KNOWN_VENUE_IDS.OANDA_FAKE).toBe("OANDA_FAKE");
+    expect(KNOWN_VENUE_IDS.IBKR_FAKE).toBe("IBKR_FAKE");
   });
 });
 
@@ -49,6 +75,21 @@ describe("crypto instrument registry", () => {
     expect(candidates.length).toBeGreaterThan(0);
     for (const c of candidates) {
       expect(c.metadata?.paperEnabled).toBe(false);
+    }
+  });
+
+  it("does NOT hard-code fabricated exchange rules for ANY crypto instrument, including BTC/ETH (Checkpoint 2 review §3)", () => {
+    for (const i of CRYPTO_SPOT_INSTRUMENTS) {
+      expect(i.priceIncrement).toBeUndefined();
+      expect(i.sizeIncrement).toBeUndefined();
+      expect(i.minSize).toBeUndefined();
+    }
+  });
+
+  it("keeps metadata.verifiedOnVenue false for every research candidate until runtime provider verification", () => {
+    const candidates = CRYPTO_SPOT_INSTRUMENTS.filter((i) => i.metadata?.researchCandidate);
+    for (const c of candidates) {
+      expect(c.metadata?.verifiedOnVenue).toBe(false);
     }
   });
 });

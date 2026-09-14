@@ -59,14 +59,24 @@ create table if not exists public.venues (
 
 -- Constraint-supporting function, only ever used by the check below - must
 -- be created before the constraint that references it.
+--
+-- Checkpoint 2 review §5: array_length(classes, 1) returns NULL (not 0) for
+-- an empty array, and a CHECK that evaluates to NULL is treated as PASSING
+-- by Postgres - so the original `array_length(classes, 1) > 0` silently
+-- ADMITTED an empty asset_classes array. cardinality() returns 0 for an
+-- empty array (never NULL for a non-null array), which is what this check
+-- actually needs.
 create or replace function public.venue_asset_classes_are_valid(classes text[])
 returns boolean language sql immutable as $$
-  select classes <@ array['CRYPTO_SPOT', 'FOREX']::text[] and array_length(classes, 1) > 0;
+  select classes <@ array['CRYPTO_SPOT', 'FOREX']::text[] and cardinality(classes) > 0;
 $$;
 
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'venues_asset_classes_valid') then
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'venues_asset_classes_valid' and conrelid = 'public.venues'::regclass
+  ) then
     alter table public.venues add constraint venues_asset_classes_valid
       check (public.venue_asset_classes_are_valid(asset_classes));
   end if;
@@ -95,9 +105,17 @@ create table if not exists public.instruments (
   quote_asset text not null,
   settlement_asset text not null,
 
-  price_increment numeric not null,
-  size_increment numeric not null,
-  min_size numeric not null default 0,
+  -- Provider-dependent, live exchange rules - NULLABLE, no default
+  -- (Checkpoint 2 review §3). This table is canonical IDENTITY, not a cache
+  -- of mutable exchange rules; the authoritative source remains
+  -- `instrument_metadata` (Bybit venue-symbol-keyed, refreshed every scan
+  -- via lib/bybit/client.ts getInstrumentMetadata()). NULL here means
+  -- "not yet verified against a live provider" - never guess a value to
+  -- fill these in. Any future generic execution code must fail closed on
+  -- NULL rather than default to 0/1 (see lib/domain/exchange-rules.ts).
+  price_increment numeric,
+  size_increment numeric,
+  min_size numeric,
   min_notional numeric,
   max_size numeric,
 
@@ -122,11 +140,21 @@ create index if not exists instruments_asset_class_idx on public.instruments (as
 
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'instruments_asset_class_valid') then
+  -- Checkpoint 2 review §6: conname alone is not guaranteed unique across
+  -- the schema, so every existence check below is scoped to its own table
+  -- via conrelid - an unrelated same-named constraint elsewhere must never
+  -- suppress creation here.
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'instruments_asset_class_valid' and conrelid = 'public.instruments'::regclass
+  ) then
     alter table public.instruments add constraint instruments_asset_class_valid
       check (asset_class in ('CRYPTO_SPOT', 'FOREX'));
   end if;
-  if not exists (select 1 from pg_constraint where conname = 'instruments_calendar_valid') then
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'instruments_calendar_valid' and conrelid = 'public.instruments'::regclass
+  ) then
     alter table public.instruments add constraint instruments_calendar_valid
       check (trading_calendar in ('CRYPTO_24_7', 'FX_24_5'));
   end if;
@@ -136,8 +164,15 @@ end $$;
 -- universes / universe_members: research universe + PER-MEMBER permission
 -- (§4/§5). `purpose` on universes is an ORGANIZATIONAL LABEL ONLY, never an
 -- authorization - see lib/domain/universe.ts for why booleans on the
--- membership row are the safer model. There is no liveEnabled column
--- anywhere below; LIVE authorization cannot be expressed by this schema.
+-- membership row are the safer model.
+--
+-- LIVE, precisely stated (Checkpoint 2 review §9 - avoid overclaiming):
+-- there is no `live_enabled` column on ANY table in this migration. This is
+-- not a column that exists and happens to default/CHECK to false (like
+-- `system_settings.live_trading_enabled`, which is a real column with a
+-- permanent CHECK) - the concept of per-instrument LIVE authorization
+-- simply has no column to hold it here. Nothing to flip because nothing
+-- exists to flip.
 -- ---------------------------------------------------------------------------
 create table if not exists public.universes (
   id uuid primary key default gen_random_uuid(),
@@ -154,9 +189,21 @@ create table if not exists public.universes (
 
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'universes_purpose_valid') then
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'universes_purpose_valid' and conrelid = 'public.universes'::regclass
+  ) then
     alter table public.universes add constraint universes_purpose_valid
       check (purpose in ('PRODUCTION', 'PAPER', 'SHADOW', 'HISTORICAL'));
+  end if;
+  -- Checkpoint 2 review §4: instruments already CHECKs asset_class; universes
+  -- had the column but no matching CHECK, so it silently accepted garbage.
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'universes_asset_class_valid' and conrelid = 'public.universes'::regclass
+  ) then
+    alter table public.universes add constraint universes_asset_class_valid
+      check (asset_class in ('CRYPTO_SPOT', 'FOREX'));
   end if;
 end $$;
 
@@ -171,6 +218,21 @@ create table if not exists public.universe_members (
   -- this member. Strategy V1's existing BTC/USDT + ETH/USDT PAPER trading
   -- does not read this column - see lib/strategy/v1/config.ts. Nothing sets
   -- this true in this migration.
+  --
+  -- Checkpoint 2 review §9 - stated precisely, not overclaimed: this column
+  -- has NO permanent CHECK forcing it false (unlike
+  -- `system_settings.live_trading_enabled`, or `trades`/`orders`' LIVE
+  -- CHECKs) - a legitimate future owner-approved PAPER promotion for a
+  -- generic-pipeline strategy must be able to set it true, so a CHECK that
+  -- always fails would be wrong here, not extra safety. What actually
+  -- keeps it false today is the combination of: (1) this seed/default is
+  -- false for every current row, (2) only the owner JWT role may mutate it
+  -- (RLS below), (3) no execution consumer exists yet - no strategy v2+ has
+  -- been implemented that reads this column at all, and (4) any future
+  -- promotion is expected to go through a separate, explicit approval step
+  -- analogous to `strategy_versions.status` moving to PAPER_APPROVED. All
+  -- four layers can change independently; there is no single "physically
+  -- cannot become true" guarantee the way LIVE has one.
   paper_enabled boolean not null default false,
 
   added_at timestamptz not null default now(),
@@ -193,14 +255,24 @@ create table if not exists public.instrument_research_eligibility (
   status text not null default 'UNKNOWN',
   reasons text[] not null default '{}',
   metrics jsonb not null default '{}'::jsonb,
-  checked_at timestamptz not null default now(),
+  -- NULLABLE, NO DEFAULT (Checkpoint 2 review §1). `now()` as a default
+  -- would stamp a "checked" timestamp on a row nobody has actually checked
+  -- - false evidence of a recent live verification. NULL means exactly
+  -- what it says: no runtime provider check has ever populated this row.
+  -- Only real discoverBybitSpotInstruments()/checkBybitResearchEligibility()
+  -- results may set this to a real timestamp; a manual/web confirmation
+  -- (see docs/BUILD_STATE.md "MANUAL VENUE EVIDENCE") never does.
+  checked_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
 do $$
 begin
-  if not exists (select 1 from pg_constraint where conname = 'eligibility_status_valid') then
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'eligibility_status_valid' and conrelid = 'public.instrument_research_eligibility'::regclass
+  ) then
     alter table public.instrument_research_eligibility add constraint eligibility_status_valid
       check (status in ('UNKNOWN', 'ELIGIBLE', 'INELIGIBLE'));
   end if;
@@ -213,35 +285,42 @@ end $$;
 -- two continues to come exclusively from the frozen V1 path, not this table.
 --
 -- IMPORTANT: whether SOL/USDT, XRP/USDT and BNB/USDT actually exist on
--- Bybit Spot, with what metadata, has NOT been verified from this
--- development sandbox - outbound requests to api.bybit.com are geo-blocked
--- here (the same CloudFront restriction lib/bybit/client.ts already
--- documents for production's Vercel region). The venue_symbol/base/quote
--- values below are seeded from the CLAUDE.md-provided candidate list, not
--- from a verified live discovery response. Re-run
+-- Bybit Spot, with what metadata, has NOT been runtime-provider-verified
+-- from this development sandbox - outbound requests to api.bybit.com are
+-- geo-blocked here (the same CloudFront restriction lib/bybit/client.ts
+-- already documents for production's Vercel region). The owner separately
+-- confirmed via a manual web check that Bybit's official Spot directory
+-- currently lists all five of BTC/ETH/SOL/XRP/BNB against USDT - that is
+-- real MANUAL VENUE EVIDENCE, but it is not this platform's own RUNTIME
+-- PROVIDER VERIFICATION (no listing `status`, no turnover, no structured,
+-- replayable result) - see docs/BUILD_STATE.md. `metadata.verifiedOnVenue`
+-- stays false for the three candidates below on that basis; re-run
 -- lib/domain/discovery/bybit-instrument-discovery.ts's
--- discoverBybitSpotInstruments() against the deployed environment BEFORE
--- treating any of the three new pairs as confirmed - and populate
--- instrument_research_eligibility from real discovery + candle-history
--- results before relying on this seed for anything beyond "the schema can
--- hold it". price_increment/size_increment placeholder values below are
--- schema-completeness placeholders, not exchange rules - never used for
--- sizing (only lib/risk/position-sizing.ts's live instrument_metadata is).
+-- discoverBybitSpotInstruments() against the deployed environment before
+-- flipping it.
+--
+-- Checkpoint 2 review §3: NO price_increment/size_increment/min_size are
+-- seeded for ANY instrument here, including BTC/ETH - those are live,
+-- provider-owned exchange rules with one authoritative source
+-- (`instrument_metadata`, refreshed by lib/risk/position-sizing.ts's
+-- callers every scan), not something to duplicate as a guessed constant in
+-- canonical identity. They are left NULL and populated only by a real
+-- provider call, if ever needed here at all.
 -- ---------------------------------------------------------------------------
 insert into public.instruments
   (canonical_id, asset_class, venue_id, venue_symbol, base_asset, quote_asset, settlement_asset,
-   price_increment, size_increment, min_size, allows_long, allows_short, trading_calendar, metadata)
+   allows_long, allows_short, trading_calendar, metadata)
 values
   ('CRYPTO:BYBIT:BTC/USDT', 'CRYPTO_SPOT', 'BYBIT', 'BTCUSDT', 'BTC', 'USDT', 'USDT',
-   0.01, 0.000001, 0, true, false, 'CRYPTO_24_7', '{"productionPair": true}'::jsonb),
+   true, false, 'CRYPTO_24_7', '{"productionPair": true}'::jsonb),
   ('CRYPTO:BYBIT:ETH/USDT', 'CRYPTO_SPOT', 'BYBIT', 'ETHUSDT', 'ETH', 'USDT', 'USDT',
-   0.01, 0.0001, 0, true, false, 'CRYPTO_24_7', '{"productionPair": true}'::jsonb),
+   true, false, 'CRYPTO_24_7', '{"productionPair": true}'::jsonb),
   ('CRYPTO:BYBIT:SOL/USDT', 'CRYPTO_SPOT', 'BYBIT', 'SOLUSDT', 'SOL', 'USDT', 'USDT',
-   0.01, 0.001, 0, true, false, 'CRYPTO_24_7', '{"researchCandidate": true, "verifiedOnVenue": false}'::jsonb),
+   true, false, 'CRYPTO_24_7', '{"researchCandidate": true, "verifiedOnVenue": false}'::jsonb),
   ('CRYPTO:BYBIT:XRP/USDT', 'CRYPTO_SPOT', 'BYBIT', 'XRPUSDT', 'XRP', 'USDT', 'USDT',
-   0.0001, 1, 0, true, false, 'CRYPTO_24_7', '{"researchCandidate": true, "verifiedOnVenue": false}'::jsonb),
+   true, false, 'CRYPTO_24_7', '{"researchCandidate": true, "verifiedOnVenue": false}'::jsonb),
   ('CRYPTO:BYBIT:BNB/USDT', 'CRYPTO_SPOT', 'BYBIT', 'BNBUSDT', 'BNB', 'USDT', 'USDT',
-   0.01, 0.001, 0, true, false, 'CRYPTO_24_7', '{"researchCandidate": true, "verifiedOnVenue": false}'::jsonb)
+   true, false, 'CRYPTO_24_7', '{"researchCandidate": true, "verifiedOnVenue": false}'::jsonb)
 on conflict (canonical_id) do nothing;
 
 insert into public.universes (key, name, purpose, asset_class, venue_id, enabled, notes)
@@ -266,9 +345,11 @@ join public.instruments i on i.canonical_id in (
 where u.key = 'crypto-core'
 on conflict (universe_id, instrument_id) do nothing;
 
--- Every newly-registered instrument starts UNKNOWN, not ELIGIBLE - no real
--- discovery/history/turnover check has been run against the live venue from
--- this sandbox (see note above).
+-- Every newly-registered instrument starts UNKNOWN, not ELIGIBLE, with
+-- checked_at left NULL (not populated) - no runtime provider
+-- discovery/history/turnover check has been run against the live venue
+-- from this sandbox (see note above). A manual web confirmation of venue
+-- listing is not a substitute for this and does not populate checked_at.
 insert into public.instrument_research_eligibility (instrument_id, status, reasons, metrics)
 select i.id, 'UNKNOWN', array['NOT_YET_CHECKED_AGAINST_LIVE_VENUE'], '{}'::jsonb
 from public.instruments i

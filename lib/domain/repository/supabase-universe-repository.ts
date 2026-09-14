@@ -1,6 +1,13 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { AssetClass, Instrument, InstrumentId, VenueId } from "../instrument";
-import type { UniverseDefinition, UniverseMember, UniverseRepository, UniversePurpose } from "../universe";
+import {
+  selectEligibleResearchInstruments,
+  type UniverseDefinition,
+  type UniverseMember,
+  type UniverseRepository,
+  type UniversePurpose,
+} from "../universe";
+import type { ResearchEligibilityStatus } from "../eligibility";
 
 /**
  * Supabase-backed UniverseRepository against the tables proposed in
@@ -28,9 +35,11 @@ type InstrumentRow = {
   base_asset: string;
   quote_asset: string;
   settlement_asset: string;
-  price_increment: number;
-  size_increment: number;
-  min_size: number;
+  // Nullable, provider-owned exchange rules (Checkpoint 2 review §3) — never
+  // defaulted here to 0/1 on read; a missing value stays missing.
+  price_increment: number | null;
+  size_increment: number | null;
+  min_size: number | null;
   max_size: number | null;
   contract_multiplier: number | null;
   pip_size: number | null;
@@ -47,6 +56,8 @@ type UniverseRow = {
   key: string;
   name: string;
   purpose: string;
+  asset_class: string;
+  venue_id: string | null;
   enabled: boolean;
 };
 
@@ -59,6 +70,12 @@ type UniverseMemberRow = {
   instruments: InstrumentRow; // joined
 };
 
+type EligibilityRow = {
+  instrument_id: string;
+  status: string;
+  checked_at: string | null;
+};
+
 function rowToInstrument(row: InstrumentRow): Instrument {
   return {
     id: row.canonical_id,
@@ -68,9 +85,9 @@ function rowToInstrument(row: InstrumentRow): Instrument {
     baseAsset: row.base_asset,
     quoteAsset: row.quote_asset,
     settlementAsset: row.settlement_asset,
-    priceIncrement: row.price_increment,
-    sizeIncrement: row.size_increment,
-    minSize: row.min_size,
+    priceIncrement: row.price_increment ?? undefined,
+    sizeIncrement: row.size_increment ?? undefined,
+    minSize: row.min_size ?? undefined,
     maxSize: row.max_size,
     contractMultiplier: row.contract_multiplier ?? undefined,
     pipSize: row.pip_size ?? undefined,
@@ -78,7 +95,20 @@ function rowToInstrument(row: InstrumentRow): Instrument {
     allowsLong: row.allows_long,
     allowsShort: row.allows_short,
     tradingCalendarId: row.trading_calendar as Instrument["tradingCalendarId"],
+    isActive: row.is_active,
     metadata: row.metadata,
+  };
+}
+
+function rowToUniverse(r: UniverseRow): UniverseDefinition {
+  return {
+    id: r.id,
+    key: r.key,
+    name: r.name,
+    purpose: r.purpose as UniversePurpose,
+    assetClass: r.asset_class as AssetClass,
+    venueId: r.venue_id,
+    enabled: r.enabled,
   };
 }
 
@@ -104,26 +134,24 @@ export class SupabaseUniverseRepository implements UniverseRepository {
   async listUniverses(): Promise<UniverseDefinition[]> {
     const { data, error } = await this.client.from("universes").select("*");
     if (error) throw error;
-    return ((data ?? []) as UniverseRow[]).map((r) => ({
-      id: r.id,
-      key: r.key,
-      name: r.name,
-      purpose: r.purpose as UniversePurpose,
-      enabled: r.enabled,
-    }));
+    return ((data ?? []) as UniverseRow[]).map(rowToUniverse);
   }
 
   async getUniverse(key: string): Promise<UniverseDefinition | null> {
     const { data, error } = await this.client.from("universes").select("*").eq("key", key).maybeSingle();
     if (error) throw error;
-    if (!data) return null;
-    const r = data as UniverseRow;
-    return { id: r.id, key: r.key, name: r.name, purpose: r.purpose as UniversePurpose, enabled: r.enabled };
+    return data ? rowToUniverse(data as UniverseRow) : null;
   }
 
   /**
-   * ONE batched query with an embedded join, not one query per instrument
-   * (Checkpoint 2 §13 - no N+1 as the universe grows to 5, 20, 50 members).
+   * Two batched queries total (members+instruments joined, then
+   * eligibility filtered by the resulting instrument ids) — never one
+   * query per instrument (Checkpoint 2 §13 - no N+1 as the universe grows
+   * to 5, 20, 50 members). Eligibility isn't embedded in the same query
+   * because there is no direct FK from `universe_members` to
+   * `instrument_research_eligibility` (only via `instruments`), and a
+   * second flat `.in()` query is simpler to reason about and test than a
+   * two-level nested embed for the same O(1)-queries guarantee.
    */
   async listUniverseMembers(universeKey: string): Promise<UniverseMember[]> {
     const universe = await this.getUniverse(universeKey);
@@ -135,13 +163,41 @@ export class SupabaseUniverseRepository implements UniverseRepository {
       .eq("universe_id", universe.id);
     if (error) throw error;
 
-    return ((data ?? []) as unknown as UniverseMemberRow[]).map((row) => ({
-      universeId: row.universe_id,
-      instrument: rowToInstrument(row.instruments),
-      researchEnabled: row.research_enabled,
-      shadowEnabled: row.shadow_enabled,
-      paperEnabled: row.paper_enabled,
-    }));
+    const memberRows = (data ?? []) as unknown as UniverseMemberRow[];
+    const instrumentIds = memberRows.map((r) => r.instrument_id);
+
+    const eligibilityByInstrumentId = new Map<string, { status: ResearchEligibilityStatus; checkedAt: number | null }>();
+    if (instrumentIds.length > 0) {
+      const { data: eligibilityRows, error: eligibilityError } = await this.client
+        .from("instrument_research_eligibility")
+        .select("instrument_id, status, checked_at")
+        .in("instrument_id", instrumentIds);
+      if (eligibilityError) throw eligibilityError;
+      for (const row of (eligibilityRows ?? []) as EligibilityRow[]) {
+        eligibilityByInstrumentId.set(row.instrument_id, {
+          status: row.status as ResearchEligibilityStatus,
+          checkedAt: row.checked_at ? new Date(row.checked_at).getTime() : null,
+        });
+      }
+    }
+
+    return memberRows.map((row) => {
+      // No eligibility row at all defaults to UNKNOWN/null - never assume
+      // ELIGIBLE by omission (Checkpoint 2 review §2).
+      const eligibility = eligibilityByInstrumentId.get(row.instrument_id) ?? {
+        status: "UNKNOWN" as ResearchEligibilityStatus,
+        checkedAt: null,
+      };
+      return {
+        universeId: row.universe_id,
+        instrument: rowToInstrument(row.instruments),
+        researchEnabled: row.research_enabled,
+        shadowEnabled: row.shadow_enabled,
+        paperEnabled: row.paper_enabled,
+        eligibilityStatus: eligibility.status,
+        eligibilityCheckedAt: eligibility.checkedAt,
+      };
+    });
   }
 
   async getResearchUniverse(universeKey: string): Promise<Instrument[]> {
@@ -149,14 +205,17 @@ export class SupabaseUniverseRepository implements UniverseRepository {
     return members.filter((m) => m.researchEnabled).map((m) => m.instrument);
   }
 
+  async getEligibleResearchUniverse(universeKey: string): Promise<Instrument[]> {
+    const universe = await this.getUniverse(universeKey);
+    const members = await this.listUniverseMembers(universeKey);
+    return selectEligibleResearchInstruments(universe, members);
+  }
+
   async setMemberFlags(
     universeKey: string,
     instrumentId: InstrumentId,
     flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled" | "paperEnabled">>,
   ): Promise<void> {
-    // paperEnabled may never be set true for a LIVE-adjacent reason here;
-    // the DB migration's CHECK constraints are the enforcement layer, this
-    // is just the typed call site. No liveEnabled field exists to set.
     const universe = await this.getUniverse(universeKey);
     if (!universe) throw new Error(`Unknown universe: ${universeKey}`);
 

@@ -71,4 +71,45 @@ describe("Checkpoint 2 migration: static safety properties", () => {
   it("marks the file as NOT applied to the live project, explicitly", () => {
     expect(sql).toMatch(/HAS NOT BEEN APPLIED TO THE LIVE PROJECT/);
   });
+
+  it("Checkpoint 2 review §1: instrument_research_eligibility.checked_at is nullable with no default", () => {
+    expect(sql).not.toMatch(/checked_at\s+timestamptz\s+not\s+null/i);
+    expect(sql).not.toMatch(/checked_at\s+timestamptz\s+not\s+null\s+default\s+now\(\)/i);
+    expect(sql).toMatch(/checked_at\s+timestamptz,/);
+  });
+
+  it("Checkpoint 2 review §3: instruments' provider-owned exchange rules are nullable, with no NOT NULL and no seeded value", () => {
+    expect(sql).not.toMatch(/price_increment\s+numeric\s+not\s+null/i);
+    expect(sql).not.toMatch(/size_increment\s+numeric\s+not\s+null/i);
+    expect(sql).not.toMatch(/min_size\s+numeric\s+not\s+null/i);
+    // The seed INSERT's explicit column list must not name any of them.
+    const seedColumnList = sql.match(/insert into public\.instruments\s*\n\s*\(([^)]+)\)/i)?.[1] ?? "";
+    for (const column of ["price_increment", "size_increment", "min_size"]) {
+      expect(seedColumnList).not.toMatch(new RegExp(`\\b${column}\\b`));
+    }
+  });
+
+  it("Checkpoint 2 review §4: universes.asset_class has its own CHECK constraint, not just a column", () => {
+    expect(sql).toMatch(/universes_asset_class_valid/);
+    expect(sql).toMatch(/alter table public\.universes add constraint universes_asset_class_valid/i);
+  });
+
+  it("Checkpoint 2 review §5: the venue asset_classes validity function uses cardinality(), not array_length() (which returns NULL, not 0, for an empty array - and a NULL CHECK result passes)", () => {
+    const functionBody = sql.match(/returns boolean language sql immutable as \$\$([\s\S]*?)\$\$;/)?.[1] ?? "";
+    expect(functionBody).toMatch(/cardinality\(classes\)\s*>\s*0/);
+    expect(functionBody).not.toMatch(/array_length/);
+  });
+
+  it("Checkpoint 2 review §6: every constraint-existence guard is scoped to its own table via conrelid, not conname alone", () => {
+    const guardBlocks = sql.match(/if not exists \(\s*select 1 from pg_constraint[^)]*\)/gi) ?? [];
+    expect(guardBlocks.length).toBeGreaterThanOrEqual(6); // one per CHECK constraint added below
+    for (const block of guardBlocks) {
+      expect(block).toMatch(/conrelid\s*=\s*'public\.\w+'::regclass/);
+    }
+  });
+
+  it("Checkpoint 2 review §9: does not claim a permanent CHECK forces paper_enabled false (no such constraint exists)", () => {
+    expect(sql).not.toMatch(/check\s*\(\s*paper_enabled\s*=\s*false\s*\)/i);
+    expect(sql).not.toMatch(/add constraint\s+\S*paper\S*/i);
+  });
 });

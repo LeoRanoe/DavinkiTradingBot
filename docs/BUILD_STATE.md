@@ -509,3 +509,105 @@ walk-forward/cost-stress/multiple-testing), shadow forward, portfolio
 risk/correlation, real forex connectivity, and the Settings → Markets UI
 are all still not implemented — unchanged from Checkpoint 1's list, since
 this checkpoint's scope was explicitly the universe/schema layer only.
+
+## Checkpoint 2 — pre-migration review fixes (2026-09-14, not yet applied)
+
+Reviewed commit `12ac0f43a24251602d543f9a70e83dc0db5baef9`. Ten correctness
+issues were raised before any live migration; all fixed in this follow-up
+commit. Nothing here has been applied to Supabase — the migration is still
+schema-proposal-only. Full itemized list in `TASKS.md`; the load-bearing
+points:
+
+- **`checked_at` no longer defaults to `now()`.** It is nullable with no
+  default; the UNKNOWN seed rows leave it NULL. A `now()` default would
+  have stamped false evidence of a recent verification on a row nobody
+  actually checked. `lib/domain/universe.ts`'s `InMemoryUniverseRepository`
+  gained a `setEligibility(..., checkedAt)` method so tests can prove the
+  null → populated transition happens only on an explicit call, never
+  implicitly.
+- **Research selection and eligibility are now two different questions.**
+  `getResearchUniverse()` still means "the owner selected this" (UNKNOWN
+  instruments can still be shown in UI/config). A new
+  `getEligibleResearchUniverse()` is fail-closed: it requires the universe
+  enabled, the member research-selected, the instrument active, AND
+  `status = 'ELIGIBLE'` — all four, via one shared pure function
+  (`selectEligibleResearchInstruments`) so the two repository
+  implementations can't drift apart on the rule. No future strategy can
+  mistake "owner picked this for research" for "this actually passed
+  eligibility".
+- **No more fabricated exchange rules, for ANY instrument, including
+  BTC/ETH.** `Instrument.priceIncrement/sizeIncrement/minSize` are now
+  optional and are never populated by `lib/domain/instruments/crypto.ts`.
+  The DB columns are nullable with no default; the seed INSERT no longer
+  names them. `lib/domain/exchange-rules.ts` is the fail-closed guard any
+  future generic execution code must call instead of defaulting a missing
+  rule to 0/1 — Strategy V1's own execution path is untouched and never
+  reads `Instrument` at all.
+- **`UniverseDefinition` keeps `assetClass`/`venueId`** instead of reading
+  them off the row and discarding them; `universes.asset_class` now has the
+  CHECK constraint `instruments.asset_class` always had.
+- **Fixed a real bug in the empty-array CHECK**: `array_length(arr, 1) > 0`
+  returns NULL for `{}` (not 0), and a NULL CHECK result is treated as
+  PASSING by Postgres — so `venues.asset_classes = '{}'` was silently
+  admitted. Switched to `cardinality(classes) > 0`, and confirmed against a
+  local scratch database that the old expression let an empty array
+  through while the new one correctly rejects it.
+- **Constraint-existence guards are now scoped to their own table**
+  (`conrelid = 'public.<table>'::regclass`), not `conname` alone, which is
+  not schema-unique.
+- **`VenueId` is now an open string type**, not a closed union — adding a
+  real future venue no longer means widening a type baked into core
+  domain code. `KNOWN_VENUE_IDS` keeps typo-safe constants for the venues
+  already in use.
+- **`PLATFORM_LONG_ONLY_POLICY`** replaces `CRYPTO_SPOT_LONG_ONLY_POLICY`
+  (the old name was wrong on the FOREX fixtures, which are not crypto
+  spot). `Instrument.isActive` was added (mirrors `instruments.is_active`)
+  — needed for the new fail-closed filter.
+- **Two comments were overclaiming and are now stated precisely.** LIVE:
+  there is no `live_enabled` column ANYWHERE in this schema — a stronger
+  statement than "a column exists and is CHECKed false", since there's no
+  column to check at all. PAPER: `paper_enabled` has NO permanent CHECK
+  forcing it false (a legitimate future owner-approved promotion must be
+  able to set it true) — its actual current safety is four independent,
+  changeable layers (false seed/default, owner-only RLS mutation, no
+  execution consumer yet, and an expected future explicit approval step),
+  not one absolute guarantee the way LIVE has.
+- **MANUAL VENUE EVIDENCE vs RUNTIME PROVIDER VERIFICATION**, made explicit
+  in the migration's seed comment: the owner's manual web confirmation that
+  BTC/ETH/SOL/XRP/BNB are listed on Bybit's Spot directory does not flip
+  `metadata.verifiedOnVenue` or move any instrument's eligibility status
+  out of `UNKNOWN`. Only a real `discoverBybitSpotInstruments()` /
+  `checkBybitResearchEligibility()` run from the deployed environment may
+  do that.
+
+**Validation:** re-ran the migration's DDL/seed statements against a fresh
+scratch local PostgreSQL 16 database (same method as the original
+Checkpoint 2 validation) — applies cleanly, idempotent on re-run, nullable
+columns are actually NULL (not a fabricated 0), `checked_at` is actually
+NULL, the fixed `cardinality()` check now correctly rejects an empty
+`asset_classes` array (confirmed the old `array_length()` version would
+have accepted it), and the new `universes_asset_class_valid` CHECK rejects
+a bogus value. Dropped the scratch database afterward.
+
+**Tests:** 533/533 passing (33 net-new over the 500 from the prior
+checkpoint commit): checked_at null/populated semantics, the fail-closed
+eligible-universe filter (UNKNOWN/INELIGIBLE/ELIGIBLE × research-selected ×
+instrument-active × universe-enabled, in both the in-memory and Supabase
+repositories), no-fabricated-exchange-rules assertions plus the
+fail-closed guard's own tests, `UniverseDefinition.assetClass/venueId`
+mapping, an extensible-`VenueId` proof, the renamed long-only reason, and
+static migration-safety checks for every item above. `npm run typecheck` /
+`npm run lint` (2 pre-existing warnings, unchanged) / `npm run build` all
+clean.
+
+**Confirmed unchanged:** Strategy V1 (`lib/strategy/v1/`,
+`app/api/jobs/scan/route.ts`, `lib/trading/`, `lib/risk/`) — not touched by
+any edit in this patch. The active 14-day PAPER research session, its AUTO
+execution policy, and current PAPER equity are not referenced by anything
+changed here. `system_settings.live_trading_enabled`'s CHECK, the
+`trades`/`orders` LIVE CHECKs, and `lib/risk/engine.ts`'s unconditional LIVE
+refusal are all untouched — and the new schema still has no `live_enabled`
+column anywhere. SOL/XRP/BNB remain `paper_enabled = false` in every seed
+row; the migration itself is still NOT applied to the live Supabase
+project — no `mcp__Supabase__*` tool call, and no production database
+mutation, was made while producing this patch.
