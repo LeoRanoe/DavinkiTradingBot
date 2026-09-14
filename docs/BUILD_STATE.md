@@ -203,3 +203,90 @@ Known transient: between 00:10 and 00:30 UTC the Supabase Edge runtime could
 not reach the project's own REST/Auth endpoints (504s), so several scans did
 not run. This predates the deployment and cleared on its own; scans resumed
 SUCCEEDED from 00:35.
+
+## Multi-market architecture — Checkpoint 1 only (2026-09-14)
+
+A much larger multi-market/multi-strategy platform was requested (generic
+instrument model, forex readiness, five new strategy families, a research
+engine with holdout/walk-forward/cost-stress and multiple-testing
+correction, shadow forward research, a universe service with DB tables and
+owner-facing UI, portfolio-level risk, correlation analytics). That is
+several weeks of work. This checkpoint delivers only its first, explicitly
+requested step ("do not deploy all at once blindly... Checkpoint 1: generic
+domain + V1 parity") and changes nothing else.
+
+**What actually shipped, all under `lib/domain/` (net-new, additive-only):**
+- Venue/asset-class-independent domain types: `Instrument`, `AssetClass`,
+  `VenueId`, `InstrumentId`, `CanonicalTimeframe`, `MarketDataProvider`,
+  `ExecutionProvider`.
+- `BybitMarketDataProvider`: a thin adapter wrapping the existing
+  `lib/bybit/client.ts` verbatim (not rewritten). Supports only 1H/15M
+  today — it refuses (throws) any other canonical timeframe rather than
+  silently mis-mapping it, since the underlying client only exposes those
+  two.
+- A static crypto instrument registry naming the frozen production pair
+  (BTC/USDT, ETH/USDT) plus SOL/USDT, XRP/USDT, BNB/USDT as
+  domain-model-only research candidates (`paperEnabled: false` in
+  metadata — nothing reads that flag yet; it documents intent for the
+  future universe service).
+- A long-only policy function that refuses SHORT platform-wide even for an
+  instrument whose own convention permits it.
+- A pure, order-independent `selectOpportunities` — the future portfolio
+  selector described in CLAUDE.md §30 — unused by production.
+- A no-network `FakeForexMarketDataProvider` (EUR/USD, USD/JPY fixtures)
+  and a `forexRiskCompliantLots` sizing function that is NOT the crypto
+  qty×price formula, proving (with tests) that the domain model can
+  represent forex pip/lot sizing, weekend market closure, and a
+  bid/ask spread, without any real broker connection.
+- Parity tests proving: (a) the adapter calls the underlying Bybit client
+  with identical arguments and passes every candle/ticker field through
+  unchanged; (b) Strategy V1's `evaluateSignal` gives byte-identical output
+  whether it's fed candles directly or via the adapter's shape; (c)
+  evaluating BTC-then-ETH vs ETH-then-BTC gives each symbol an identical
+  result (CLAUDE.md §28/§29 regression coverage).
+- 461/461 tests passing (14 net-new), `npm run typecheck`, `npm run lint`
+  (2 pre-existing unrelated warnings, no new ones), and `npm run build` all
+  clean.
+
+**Explicitly NOT touched by this checkpoint** (still exactly as before):
+Strategy V1's parameters/thresholds/production universe
+(`lib/strategy/v1/config.ts`), `app/api/jobs/scan/route.ts`, `lib/trading/*`,
+`lib/risk/*`, the active 14-day research window, current PAPER positions,
+AUTO policy, and every LIVE-disabled layer. No new instrument or strategy
+can open a PAPER position — none of this checkpoint's new code is imported
+by any route or job.
+
+**Audit finding on CLAUDE.md §28/29 (ETH concentration / first-symbol-wins):**
+`app/api/jobs/scan/route.ts` iterates `STRATEGY_V1_PARAMS.symbols` (`["BTCUSDT",
+"ETHUSDT"]`) in a single sequential `for` loop, fetching candles and
+evaluating `evaluateSignal` independently per symbol with no shared mutable
+state between iterations — so (a) is a real regression risk for the
+`maxOpenPositions = 1` limit specifically: if BTC's evaluation in one scan
+opens/claims the one available position before ETH is evaluated in the same
+loop, ETH can never candidate in that cycle purely because of array order.
+This is the exact bug CLAUDE.md §29 asks to document rather than fix during
+the active experiment — it has NOT been changed. `lib/domain/opportunity.ts`
+`selectOpportunities` is the future fix (evaluate everything first, then
+select), but it is not wired into the scanner. Whether ETH's apparent
+concentration in current production data is (A) more valid V1 setups or (B)
+this ordering effect has not been separated out — that requires a
+signals-history query against the live database, which is future analysis
+work, not something this checkpoint's code changes can determine.
+
+**Not done yet** (genuinely outstanding against the full request — no DB
+migration, no UI, and none of these exist yet):
+- Universe service + `instruments`/`venues`/`universes`/`universe_members`
+  DB tables, RLS, and the Settings → Markets research/paper toggle UI.
+- Strategy families v2-trb, v3-ma, v4-tsmom, v5-bbmr, v6-xmom, and the
+  `/strategies` evidence-by-instrument UI.
+- The full research engine: pre-registered trials, development/validation/
+  holdout/walk-forward splits, cost-stress (1.5x/2x), Deflated Sharpe /
+  multiple-testing accounting, trial-count reporting.
+- Shadow forward research and its result recording.
+- Portfolio-level risk (`maxTotalOpenRisk`, correlation, asset-class
+  exposure) and correlation analytics.
+- A real forex market-data/execution adapter (OANDA/IBKR) — only a fake,
+  no-network fixture exists, deliberately, per CLAUDE.md §40/§41.
+- Live-instrument eligibility verification (listing date, liquidity,
+  turnover, spread) for SOL/XRP/BNB — the registry only proves the domain
+  model can name them; nothing has checked them against the venue yet.

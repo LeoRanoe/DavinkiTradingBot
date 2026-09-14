@@ -135,3 +135,52 @@ for the exact next action.
   EFFECTIVE execution policy and the research day, and never to display a
   DRAFT strategy as PAPER_APPROVED.
 - [x] 270 -> 334 tests. Strategy V1 remains DRAFT; LIVE remains disabled.
+
+## Multi-market architecture — Checkpoint 1 (generic domain + V1 parity)
+
+Scope of this checkpoint only: introduce the venue/asset-class-independent
+domain abstractions (`lib/domain/`) requested for the multi-market/multi-
+strategy platform, and prove they don't change Strategy V1's behavior. This
+checkpoint does **not** touch any production code path, any database
+schema, or any UI. See `docs/BUILD_STATE.md` for detail and for the honest
+list of everything the full spec still asks for that is NOT done yet.
+
+- [x] Generic domain types: `AssetClass`, `VenueId`, `InstrumentId`,
+  `Instrument` (`lib/domain/instrument.ts`), `CanonicalTimeframe`
+  (`lib/domain/timeframe.ts`), `MarketDataProvider` /
+  `ExecutionProvider` interfaces.
+- [x] `BybitMarketDataProvider` (`lib/domain/adapters/bybit-market-data-provider.ts`)
+  — a thin wrapper over the EXISTING, unmodified `lib/bybit/client.ts`. It
+  only supports 1H/15M today because that's all the underlying client
+  exposes; it throws rather than mis-mapping any other canonical timeframe.
+- [x] Canonical crypto instrument registry (`lib/domain/instruments/crypto.ts`)
+  naming BTC/USDT, ETH/USDT (the frozen production pair) plus SOL, XRP, BNB
+  as domain-model-only research candidates, each explicitly flagged
+  `paperEnabled: false`. Nothing in the codebase reads these new candidate
+  ids yet — no scanner, no execution path, no universe table.
+- [x] Long-only policy enforcement as a domain function
+  (`assertLongOnlyPolicy`) that refuses SHORT even for an instrument whose
+  convention allows it (proves "supporting a domain enum is not permission
+  to short", CLAUDE.md §17).
+- [x] `OpportunitySelector` (`lib/domain/opportunity.ts`) — deterministic,
+  array-order-independent selection, for FUTURE multi-instrument research
+  only. NOT wired into `app/api/jobs/scan/route.ts`.
+- [x] Forex readiness proof only (CLAUDE.md §40/§41): fake, no-network
+  `FakeForexMarketDataProvider` + EUR/USD and USD/JPY fixtures showing pip
+  size, lot sizing (`forexRiskCompliantLots`, NOT the crypto qty×price
+  formula), a bid/ask spread, and a weekend-closed trading calendar. No real
+  broker is connected; no forex trading exists.
+- [x] Parity + regression tests (`lib/domain/__tests__/`): the adapter calls
+  the same underlying client function with the same arguments and changes
+  no field; Strategy V1's `evaluateSignal` produces identical output
+  whether fed directly or through the adapter's candle shape; BTC-then-ETH
+  vs ETH-then-BTC evaluation is proven order-independent (CLAUDE.md
+  §28/§29).
+- [x] 461/461 tests passing (was 254 in Milestone 3, then grew through
+  later milestones to 447 before this checkpoint's 14 new tests), typecheck
+  clean, lint unchanged (2 pre-existing warnings), production build clean.
+- [ ] Everything else in the full spec (universe service + DB tables,
+  Settings → Markets / Strategies / Markets UI, strategy families v2-v6,
+  research engine, holdout/walk-forward/cost-stress, shadow forward,
+  correlation analytics, multiple-testing accounting, real forex adapter)
+  is genuinely NOT implemented. See "Not done yet" in `docs/BUILD_STATE.md`.
