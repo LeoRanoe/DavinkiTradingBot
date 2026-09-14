@@ -19,6 +19,7 @@ import { reconcileResearchExpiry } from "@/lib/research/expiry";
 import { effectiveExecutionPolicy } from "@/lib/research/policy";
 import { isStrategyEligibleForPaper } from "@/lib/research/eligibility";
 import { formatResearchDay } from "@/lib/research/window";
+import { recordDailySnapshot } from "@/lib/research/daily";
 import {
   createCandleLoader,
   loadUnsettledShadows,
@@ -619,6 +620,31 @@ export async function POST(request: NextRequest) {
   }
 
   // ---------------------------------------------------------------------
+  // PHASE 2.5 - close out the previous UTC day, exactly once.
+  //
+  // Attempted on every scan but guarded by a unique (session, date) row, so
+  // only the first scan after midnight UTC actually records it and sends the
+  // single daily summary. Timestamped one minute into the previous day so the
+  // day being closed is unambiguous.
+  // ---------------------------------------------------------------------
+  let dailySnapshot: string | null = null;
+  if (researchWindow && researchSessionId) {
+    try {
+      const previousDay = new Date(scanStartedMs);
+      previousDay.setUTCHours(0, 0, 0, 0);
+      const closeAtMs = previousDay.getTime() - 60_000; // one minute before midnight
+
+      if (closeAtMs >= Date.parse(researchWindow.startedAt)) {
+        const outcome = await recordDailySnapshot(admin, researchWindow, closeAtMs);
+        if (outcome.kind === "RECORDED") dailySnapshot = outcome.snapshot.utcDate;
+      }
+    } catch (dailyErr) {
+      // Reporting must never affect trading.
+      errors.push(`daily snapshot: ${(dailyErr as Error).message}`);
+    }
+  }
+
+  // ---------------------------------------------------------------------
   // PHASE 3 - shadow research (counterfactual only).
   //
   // Runs LAST, after every trading decision is already committed, and every
@@ -659,6 +685,7 @@ export async function POST(request: NextRequest) {
     researchSessionId,
     shadowsQueued,
     shadowsSettled,
+    dailySnapshot,
   });
 
   return NextResponse.json({
@@ -677,6 +704,7 @@ export async function POST(request: NextRequest) {
     autoRejected,
     shadowsQueued,
     shadowsSettled,
+    dailySnapshot,
     errors,
   });
 }

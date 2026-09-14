@@ -1002,6 +1002,101 @@ export type Database = {
         }
         Relationships: []
       }
+      research_daily_snapshots: {
+        Row: {
+          average_mae_r: number | null
+          average_mfe_r: number | null
+          candidates: number
+          counterfactual_settled: number
+          counterfactual_total: number
+          created_at: string
+          cumulative_r: number | null
+          day_number: number
+          detail: Json | null
+          equity: number | null
+          evidence_level: string | null
+          id: string
+          losses: number
+          max_drawdown: number | null
+          news_health: string | null
+          notified_at: string | null
+          qwen_health: string | null
+          realized_pnl: number
+          realized_r: number | null
+          research_session_id: string
+          scanner_health: string | null
+          total_days: number
+          trades_closed: number
+          trades_opened: number
+          utc_date: string
+          wins: number
+        }
+        Insert: {
+          average_mae_r?: number | null
+          average_mfe_r?: number | null
+          candidates?: number
+          counterfactual_settled?: number
+          counterfactual_total?: number
+          created_at?: string
+          cumulative_r?: number | null
+          day_number: number
+          detail?: Json | null
+          equity?: number | null
+          evidence_level?: string | null
+          id?: string
+          losses?: number
+          max_drawdown?: number | null
+          news_health?: string | null
+          notified_at?: string | null
+          qwen_health?: string | null
+          realized_pnl?: number
+          realized_r?: number | null
+          research_session_id: string
+          scanner_health?: string | null
+          total_days: number
+          trades_closed?: number
+          trades_opened?: number
+          utc_date: string
+          wins?: number
+        }
+        Update: {
+          average_mae_r?: number | null
+          average_mfe_r?: number | null
+          candidates?: number
+          counterfactual_settled?: number
+          counterfactual_total?: number
+          created_at?: string
+          cumulative_r?: number | null
+          day_number?: number
+          detail?: Json | null
+          equity?: number | null
+          evidence_level?: string | null
+          id?: string
+          losses?: number
+          max_drawdown?: number | null
+          news_health?: string | null
+          notified_at?: string | null
+          qwen_health?: string | null
+          realized_pnl?: number
+          realized_r?: number | null
+          research_session_id?: string
+          scanner_health?: string | null
+          total_days?: number
+          trades_closed?: number
+          trades_opened?: number
+          utc_date?: string
+          wins?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "research_daily_snapshots_research_session_id_fkey"
+            columns: ["research_session_id"]
+            isOneToOne: false
+            referencedRelation: "paper_research_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       research_hypotheses: {
         Row: {
           created_at: string
