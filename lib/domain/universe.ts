@@ -20,9 +20,10 @@ import type { ResearchEligibilityStatus } from "./eligibility";
  * — unlike LIVE, a legitimate future owner-approved PAPER promotion must be
  * able to set it true, so such a CHECK would be wrong, not extra safety.
  * What keeps it false today: the seed/default is false for every current
- * row, only the owner JWT role may mutate it, and no execution consumer
- * exists yet (no strategy v2+ reads this column at all). See the migration
- * file for the full statement.
+ * row, `UniverseRepository.setMemberFlags` deliberately cannot set it at
+ * all (final pre-apply guardrail patch §6 — see that method's doc comment),
+ * and no execution consumer exists yet (no strategy v2+ reads this column).
+ * See the migration file for the full statement.
  */
 export type UniversePurpose = "PRODUCTION" | "PAPER" | "SHADOW" | "HISTORICAL";
 
@@ -91,11 +92,23 @@ export interface UniverseRepository {
    * research" for "this has actually passed eligibility".
    */
   getEligibleResearchUniverse(universeKey: string): Promise<Instrument[]>;
-  /** Owner-only in practice (enforced by RLS + route auth, not here). */
+  /**
+   * Owner-only in practice (enforced by RLS + route auth, not here).
+   *
+   * Final pre-apply guardrail patch §6: deliberately does NOT accept
+   * `paperEnabled`. PAPER promotion is not a generic flag flip alongside
+   * research/shadow selection - it is the one setting with an actual
+   * execution consequence once a generic-pipeline strategy exists, so it
+   * needs its own dedicated, more heavily guarded path (analogous to
+   * `strategy_versions.status` moving to `PAPER_APPROVED`) rather than
+   * riding through the same call as "the owner ticked a research
+   * checkbox". No such dedicated path exists yet in this checkpoint -
+   * `paper_enabled` stays false for everything until one is built.
+   */
   setMemberFlags(
     universeKey: string,
     instrumentId: InstrumentId,
-    flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled" | "paperEnabled">>,
+    flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled">>,
   ): Promise<void>;
 }
 
@@ -111,7 +124,18 @@ export function selectEligibleResearchInstruments(
 ): Instrument[] {
   if (!universe || !universe.enabled) return [];
   return members
-    .filter((m) => m.researchEnabled && m.instrument.isActive && m.eligibilityStatus === "ELIGIBLE")
+    .filter(
+      (m) =>
+        m.researchEnabled &&
+        m.instrument.isActive &&
+        m.eligibilityStatus === "ELIGIBLE" &&
+        // Final pre-apply guardrail patch §1: an ELIGIBLE row with no
+        // checked_at is a data bug (the DB CHECK
+        // eligibility_checked_at_required_when_eligible should prevent it
+        // from existing at all), not a case to trust anyway. Fail closed
+        // rather than assume a null timestamp still means "verified".
+        m.eligibilityCheckedAt !== null,
+    )
     .map((m) => m.instrument);
 }
 
@@ -166,7 +190,7 @@ export class InMemoryUniverseRepository implements UniverseRepository {
   async setMemberFlags(
     universeKey: string,
     instrumentId: InstrumentId,
-    flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled" | "paperEnabled">>,
+    flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled">>,
   ): Promise<void> {
     const list = this.members.get(universeKey);
     if (!list) throw new Error(`Unknown universe: ${universeKey}`);

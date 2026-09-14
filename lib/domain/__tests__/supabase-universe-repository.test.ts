@@ -208,6 +208,22 @@ describe("SupabaseUniverseRepository", () => {
       expect(eligible.map((i) => i.venueSymbol)).toEqual(["SOLUSDT"]);
     });
 
+    it("RESEARCH_ENABLED + ELIGIBLE but checked_at is null -> NOT eligible (final guardrail patch §1 - a data bug, not trusted anyway)", async () => {
+      const from = vi.fn((table: string) => {
+        if (table === "universes") return makeQueryBuilder({ data: universeRow, error: null });
+        if (table === "universe_members")
+          return makeQueryBuilder({
+            data: [{ universe_id: "u1", instrument_id: "instr-uuid-1", research_enabled: true, shadow_enabled: false, paper_enabled: false, instruments: instrumentRow }],
+            error: null,
+          });
+        if (table === "instrument_research_eligibility")
+          return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "ELIGIBLE", checked_at: null }], error: null });
+        throw new Error(`unexpected table ${table}`);
+      });
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
+    });
+
     it("disabled universe -> none eligible, even if the member is ELIGIBLE", async () => {
       const from = vi.fn((table: string) => {
         if (table === "universes") return makeQueryBuilder({ data: { ...universeRow, enabled: false }, error: null });

@@ -102,7 +102,7 @@ describe("Checkpoint 2 migration: static safety properties", () => {
 
   it("Checkpoint 2 review §6: every constraint-existence guard is scoped to its own table via conrelid, not conname alone", () => {
     const guardBlocks = sql.match(/if not exists \(\s*select 1 from pg_constraint[^)]*\)/gi) ?? [];
-    expect(guardBlocks.length).toBeGreaterThanOrEqual(6); // one per CHECK constraint added below
+    expect(guardBlocks.length).toBeGreaterThanOrEqual(7); // one per CHECK constraint added below
     for (const block of guardBlocks) {
       expect(block).toMatch(/conrelid\s*=\s*'public\.\w+'::regclass/);
     }
@@ -111,5 +111,51 @@ describe("Checkpoint 2 migration: static safety properties", () => {
   it("Checkpoint 2 review §9: does not claim a permanent CHECK forces paper_enabled false (no such constraint exists)", () => {
     expect(sql).not.toMatch(/check\s*\(\s*paper_enabled\s*=\s*false\s*\)/i);
     expect(sql).not.toMatch(/add constraint\s+\S*paper\S*/i);
+  });
+
+  it("final guardrail patch §2: instrument_research_eligibility has a CHECK requiring checked_at when status is ELIGIBLE", () => {
+    expect(sql).toMatch(/add constraint eligibility_checked_at_required_when_eligible/i);
+    expect(sql).toMatch(/check\s*\(\s*status\s*<>\s*'ELIGIBLE'\s*or\s*checked_at\s+is\s+not\s+null\s*\)/i);
+  });
+
+  it("final guardrail patch §3: instrument_research_eligibility has NO owner (or any client-role) mutation policy - read-only for every client role", () => {
+    expect(sql).not.toMatch(/create policy "owner_manage_eligibility"/i);
+    // Only the read policy exists for this table; no `for all`/`for insert`/`for update` policy is created on it.
+    const eligibilityPolicyBlock = sql.slice(sql.indexOf("public.instrument_research_eligibility for select"));
+    const createPolicyStatements = eligibilityPolicyBlock.match(/create policy[^;]*on public\.instrument_research_eligibility[^;]*;/gi) ?? [];
+    for (const stmt of createPolicyStatements) {
+      expect(stmt).toMatch(/for select/i);
+    }
+  });
+
+  it("final guardrail patch §4: universe_members has a cross-table compatibility trigger (asset_class + venue) - a plain CHECK cannot express this", () => {
+    expect(sql).toMatch(/validate_universe_member_compatibility/);
+    expect(sql).toMatch(/create trigger universe_members_validate_compatibility/i);
+    expect(sql).toMatch(/before insert or update on public\.universe_members/i);
+  });
+
+  it("final guardrail patch §5: instruments has a venue/asset-class compatibility trigger", () => {
+    expect(sql).toMatch(/validate_instrument_venue_asset_class/);
+    expect(sql).toMatch(/create trigger instruments_validate_venue_asset_class/i);
+    expect(sql).toMatch(/before insert or update on public\.instruments/i);
+  });
+
+  it("final guardrail patch §6: universe_members' seed INSERT still only ever writes paper_enabled = false (setMemberFlags cannot write it at all at the app layer)", () => {
+    expect(sql).toMatch(/insert into public\.universe_members[\s\S]*?paper_enabled\)/i);
+    expect(sql).toMatch(/select u\.id, i\.id, true, false, false/);
+  });
+
+  it("final guardrail patch §8: a shared set_updated_at() trigger function exists and is attached to every table with an updated_at column", () => {
+    expect(sql).toMatch(/create or replace function public\.set_updated_at\(\)/);
+    expect(sql).toMatch(/new\.updated_at = now\(\)/);
+    const triggersByTable: Record<string, string> = {
+      instruments: "instruments_set_updated_at",
+      universes: "universes_set_updated_at",
+      universe_members: "universe_members_set_updated_at",
+      instrument_research_eligibility: "eligibility_set_updated_at",
+    };
+    for (const [table, trigger] of Object.entries(triggersByTable)) {
+      expect(sql).toMatch(new RegExp(`create trigger ${trigger}\\s+before update on public\\.${table}`, "i"));
+    }
   });
 });

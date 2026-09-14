@@ -45,6 +45,23 @@
 --     multi-instrument research pipeline reads before it ever runs a trial.
 
 -- ---------------------------------------------------------------------------
+-- Shared trigger function: updated_at that actually works (final
+-- pre-apply guardrail patch §8). Every prior version of this migration
+-- declared `updated_at timestamptz not null default now()` and then relied
+-- on application code to set it on every UPDATE - nothing enforced that,
+-- so a write through any other path (a manual SQL fix, a future admin
+-- tool) would silently leave a stale updated_at. A single generic
+-- BEFORE UPDATE trigger, attached per table below, removes that gap.
+-- ---------------------------------------------------------------------------
+create or replace function public.set_updated_at()
+returns trigger language plpgsql as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- venues: core instrument identity is not tied to Bybit (§3). Only BYBIT is
 -- real; OANDA/IBKR are not connected and are not seeded - the point is that
 -- adding one later means an INSERT here, not a schema change.
@@ -160,6 +177,41 @@ begin
   end if;
 end $$;
 
+drop trigger if exists instruments_set_updated_at on public.instruments;
+create trigger instruments_set_updated_at
+  before update on public.instruments
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Venue/instrument supported-asset-class compatibility (final pre-apply
+-- guardrail patch §5). A plain CHECK cannot reference another table, so
+-- this is a trigger: an instrument's asset_class must be one of its
+-- venue's declared asset_classes. Without this, nothing would stop a
+-- CRYPTO_SPOT instrument being attached to a venue whose asset_classes is
+-- only FOREX (or vice versa) - a silent, structurally-wrong pairing.
+-- ---------------------------------------------------------------------------
+create or replace function public.validate_instrument_venue_asset_class()
+returns trigger language plpgsql as $$
+declare
+  venue_classes text[];
+begin
+  select asset_classes into venue_classes from public.venues where id = new.venue_id;
+  if not found then
+    raise exception 'Unknown venue % for instrument %', new.venue_id, new.canonical_id;
+  end if;
+  if not (new.asset_class = any(venue_classes)) then
+    raise exception 'Instrument % has asset_class % but venue % only supports %',
+      new.canonical_id, new.asset_class, new.venue_id, venue_classes;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists instruments_validate_venue_asset_class on public.instruments;
+create trigger instruments_validate_venue_asset_class
+  before insert or update on public.instruments
+  for each row execute function public.validate_instrument_venue_asset_class();
+
 -- ---------------------------------------------------------------------------
 -- universes / universe_members: research universe + PER-MEMBER permission
 -- (§4/§5). `purpose` on universes is an ORGANIZATIONAL LABEL ONLY, never an
@@ -207,6 +259,11 @@ begin
   end if;
 end $$;
 
+drop trigger if exists universes_set_updated_at on public.universes;
+create trigger universes_set_updated_at
+  before update on public.universes
+  for each row execute function public.set_updated_at();
+
 create table if not exists public.universe_members (
   id uuid primary key default gen_random_uuid(),
   universe_id uuid not null references public.universes(id) on delete cascade,
@@ -243,6 +300,57 @@ create table if not exists public.universe_members (
 create index if not exists universe_members_universe_idx on public.universe_members (universe_id);
 create index if not exists universe_members_instrument_idx on public.universe_members (instrument_id);
 
+drop trigger if exists universe_members_set_updated_at on public.universe_members;
+create trigger universe_members_set_updated_at
+  before update on public.universe_members
+  for each row execute function public.set_updated_at();
+
+-- ---------------------------------------------------------------------------
+-- Universe/instrument asset-class + venue compatibility (final pre-apply
+-- guardrail patch §4). Another cross-table rule a plain CHECK cannot
+-- express: a member's instrument must share the universe's asset_class,
+-- and - when the universe pins a specific venue - the instrument's venue
+-- too. Without this, a FOREX instrument could silently join a CRYPTO_SPOT
+-- universe, or a Bybit instrument could join a universe pinned to a venue
+-- it isn't listed on.
+-- ---------------------------------------------------------------------------
+create or replace function public.validate_universe_member_compatibility()
+returns trigger language plpgsql as $$
+declare
+  u_asset_class text;
+  u_venue_id text;
+  i_asset_class text;
+  i_venue_id text;
+begin
+  select asset_class, venue_id into u_asset_class, u_venue_id
+    from public.universes where id = new.universe_id;
+  if not found then
+    raise exception 'Unknown universe % for universe_members row', new.universe_id;
+  end if;
+
+  select asset_class, venue_id into i_asset_class, i_venue_id
+    from public.instruments where id = new.instrument_id;
+  if not found then
+    raise exception 'Unknown instrument % for universe_members row', new.instrument_id;
+  end if;
+
+  if i_asset_class <> u_asset_class then
+    raise exception 'Instrument asset_class % does not match universe asset_class %', i_asset_class, u_asset_class;
+  end if;
+
+  if u_venue_id is not null and i_venue_id <> u_venue_id then
+    raise exception 'Instrument venue % does not match universe-pinned venue %', i_venue_id, u_venue_id;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists universe_members_validate_compatibility on public.universe_members;
+create trigger universe_members_validate_compatibility
+  before insert or update on public.universe_members
+  for each row execute function public.validate_universe_member_compatibility();
+
 -- ---------------------------------------------------------------------------
 -- instrument_research_eligibility: latest eligibility read per instrument
 -- (§8). One row per instrument (latest snapshot) rather than a growing
@@ -276,7 +384,27 @@ begin
     alter table public.instrument_research_eligibility add constraint eligibility_status_valid
       check (status in ('UNKNOWN', 'ELIGIBLE', 'INELIGIBLE'));
   end if;
+  -- Final pre-apply guardrail patch §2: a row cannot claim ELIGIBLE without
+  -- also carrying the timestamp of the check that produced it. This is the
+  -- database-level twin of lib/domain/universe.ts's
+  -- selectEligibleResearchInstruments(), which additionally refuses to
+  -- treat a row as eligible if eligibilityCheckedAt is null (patch §1) -
+  -- belt and suspenders, so the rule holds even for a write that bypasses
+  -- the application layer entirely.
+  if not exists (
+    select 1 from pg_constraint
+    where conname = 'eligibility_checked_at_required_when_eligible'
+      and conrelid = 'public.instrument_research_eligibility'::regclass
+  ) then
+    alter table public.instrument_research_eligibility add constraint eligibility_checked_at_required_when_eligible
+      check (status <> 'ELIGIBLE' or checked_at is not null);
+  end if;
 end $$;
+
+drop trigger if exists eligibility_set_updated_at on public.instrument_research_eligibility;
+create trigger eligibility_set_updated_at
+  before update on public.instrument_research_eligibility
+  for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
 -- Seed data: the initial crypto research universe (§6/§13). research_enabled
@@ -399,10 +527,18 @@ create policy "owner_manage_universe_members" on public.universe_members for all
   using (((select auth.jwt())->'app_metadata'->>'role') = 'owner')
   with check (((select auth.jwt())->'app_metadata'->>'role') = 'owner');
 
+-- instrument_research_eligibility: READ-ONLY for every client role, owner
+-- included (final pre-apply guardrail patch §3). There is deliberately NO
+-- owner-mutation policy here, unlike instruments/universes/universe_members
+-- above. An eligibility verdict must come from an actual runtime provider
+-- check (lib/domain/discovery/bybit-instrument-discovery.ts), never from a
+-- person clicking a toggle in a UI - so the client-facing API surface (the
+-- publishable key, subject to RLS) has no path to write this table at all.
+-- A future discovery job writes it using the service-role key, which
+-- bypasses RLS by design (same pattern as the scanner writing
+-- `instrument_metadata` today) - that is a deliberate server-side
+-- capability, not a gap in this policy set.
 drop policy if exists "owner_manage_eligibility" on public.instrument_research_eligibility;
-create policy "owner_manage_eligibility" on public.instrument_research_eligibility for all to authenticated
-  using (((select auth.jwt())->'app_metadata'->>'role') = 'owner')
-  with check (((select auth.jwt())->'app_metadata'->>'role') = 'owner');
 
 -- venues has no owner-mutation policy: it is expected to change rarely (a
 -- new venue being connected is itself a significant, deliberate act) and is

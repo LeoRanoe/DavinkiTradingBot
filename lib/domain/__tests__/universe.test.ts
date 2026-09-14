@@ -54,7 +54,7 @@ describe("InMemoryUniverseRepository", () => {
     expect(members[0].paperEnabled).toBe(false);
   });
 
-  it("setMemberFlags can enable research without touching paper, and vice versa", async () => {
+  it("setMemberFlags can enable research without touching shadow, and vice versa - and never touches paper (final guardrail patch §6)", async () => {
     const repo = new InMemoryUniverseRepository();
     const [, , sol] = CRYPTO_SPOT_INSTRUMENTS;
     repo.seedUniverse(cryptoCoreDef(), [member(sol)]);
@@ -62,12 +62,24 @@ describe("InMemoryUniverseRepository", () => {
     await repo.setMemberFlags("crypto-core", sol.id, { researchEnabled: true });
     let members = await repo.listUniverseMembers("crypto-core");
     expect(members[0].researchEnabled).toBe(true);
-    expect(members[0].paperEnabled).toBe(false); // unchanged
+    expect(members[0].shadowEnabled).toBe(false); // unchanged
+    expect(members[0].paperEnabled).toBe(false); // never settable via this method
 
-    await repo.setMemberFlags("crypto-core", sol.id, { paperEnabled: true });
+    await repo.setMemberFlags("crypto-core", sol.id, { shadowEnabled: true });
     members = await repo.listUniverseMembers("crypto-core");
     expect(members[0].researchEnabled).toBe(true); // still true, not clobbered
-    expect(members[0].paperEnabled).toBe(true);
+    expect(members[0].shadowEnabled).toBe(true);
+    expect(members[0].paperEnabled).toBe(false); // still untouched
+  });
+
+  it("setMemberFlags's TypeScript signature has no paperEnabled key to pass at all", () => {
+    // Compile-time proof, not a runtime assertion: this line would fail
+    // `npm run typecheck` if paperEnabled were ever re-added to the
+    // Partial<Pick<...>> flags parameter.
+    type Flags = Parameters<InMemoryUniverseRepository["setMemberFlags"]>[2];
+    type HasPaperEnabled = "paperEnabled" extends keyof Flags ? true : false;
+    const hasPaperEnabled: HasPaperEnabled = false;
+    expect(hasPaperEnabled).toBe(false);
   });
 
   it("a disabled/absent universe member yields an empty research universe rather than throwing", async () => {
@@ -141,18 +153,31 @@ describe("InMemoryUniverseRepository", () => {
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
 
-    it("RESEARCH_ENABLED + ELIGIBLE -> eligible", async () => {
+    it("RESEARCH_ENABLED + ELIGIBLE + a real checkedAt -> eligible", async () => {
       const repo = new InMemoryUniverseRepository();
       const [btc] = CRYPTO_SPOT_INSTRUMENTS;
-      repo.seedUniverse(cryptoCoreDef(), [member(btc, { researchEnabled: true, eligibilityStatus: "ELIGIBLE" })]);
+      repo.seedUniverse(cryptoCoreDef(), [
+        member(btc, { researchEnabled: true, eligibilityStatus: "ELIGIBLE", eligibilityCheckedAt: Date.now() }),
+      ]);
       const eligible = await repo.getEligibleResearchUniverse("crypto-core");
       expect(eligible.map((i) => i.venueSymbol)).toEqual(["BTCUSDT"]);
     });
 
-    it("disabled universe -> none eligible, even with an ELIGIBLE, research-selected member", async () => {
+    it("RESEARCH_ENABLED + ELIGIBLE but checkedAt still null -> NOT eligible (final guardrail patch §1 - a data bug, not trusted anyway)", async () => {
       const repo = new InMemoryUniverseRepository();
       const [btc] = CRYPTO_SPOT_INSTRUMENTS;
-      repo.seedUniverse(cryptoCoreDef({ enabled: false }), [member(btc, { researchEnabled: true, eligibilityStatus: "ELIGIBLE" })]);
+      repo.seedUniverse(cryptoCoreDef(), [
+        member(btc, { researchEnabled: true, eligibilityStatus: "ELIGIBLE", eligibilityCheckedAt: null }),
+      ]);
+      expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
+    });
+
+    it("disabled universe -> none eligible, even with an ELIGIBLE, research-selected, checked member", async () => {
+      const repo = new InMemoryUniverseRepository();
+      const [btc] = CRYPTO_SPOT_INSTRUMENTS;
+      repo.seedUniverse(cryptoCoreDef({ enabled: false }), [
+        member(btc, { researchEnabled: true, eligibilityStatus: "ELIGIBLE", eligibilityCheckedAt: Date.now() }),
+      ]);
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
 
@@ -179,15 +204,33 @@ describe("InMemoryUniverseRepository", () => {
   describe("selectEligibleResearchInstruments (pure helper, shared by both repository implementations)", () => {
     it("is the single source of truth for the fail-closed rule", () => {
       const universe = cryptoCoreDef();
-      const eligibleMember = member(CRYPTO_SPOT_INSTRUMENTS[0], { researchEnabled: true, eligibilityStatus: "ELIGIBLE" });
+      const eligibleMember = member(CRYPTO_SPOT_INSTRUMENTS[0], {
+        researchEnabled: true,
+        eligibilityStatus: "ELIGIBLE",
+        eligibilityCheckedAt: Date.now(),
+      });
       const unknownMember = member(CRYPTO_SPOT_INSTRUMENTS[1], { researchEnabled: true, eligibilityStatus: "UNKNOWN" });
       const result = selectEligibleResearchInstruments(universe, [eligibleMember, unknownMember]);
       expect(result.map((i) => i.venueSymbol)).toEqual(["BTCUSDT"]);
     });
 
     it("returns [] for a null universe", () => {
-      const eligibleMember = member(CRYPTO_SPOT_INSTRUMENTS[0], { researchEnabled: true, eligibilityStatus: "ELIGIBLE" });
+      const eligibleMember = member(CRYPTO_SPOT_INSTRUMENTS[0], {
+        researchEnabled: true,
+        eligibilityStatus: "ELIGIBLE",
+        eligibilityCheckedAt: Date.now(),
+      });
       expect(selectEligibleResearchInstruments(null, [eligibleMember])).toEqual([]);
+    });
+
+    it("returns [] for an ELIGIBLE member with a null eligibilityCheckedAt (final guardrail patch §1)", () => {
+      const universe = cryptoCoreDef();
+      const corruptMember = member(CRYPTO_SPOT_INSTRUMENTS[0], {
+        researchEnabled: true,
+        eligibilityStatus: "ELIGIBLE",
+        eligibilityCheckedAt: null,
+      });
+      expect(selectEligibleResearchInstruments(universe, [corruptMember])).toEqual([]);
     });
   });
 });

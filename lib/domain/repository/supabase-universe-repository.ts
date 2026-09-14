@@ -214,7 +214,7 @@ export class SupabaseUniverseRepository implements UniverseRepository {
   async setMemberFlags(
     universeKey: string,
     instrumentId: InstrumentId,
-    flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled" | "paperEnabled">>,
+    flags: Partial<Pick<UniverseMember, "researchEnabled" | "shadowEnabled">>,
   ): Promise<void> {
     const universe = await this.getUniverse(universeKey);
     if (!universe) throw new Error(`Unknown universe: ${universeKey}`);
@@ -233,7 +233,9 @@ export class SupabaseUniverseRepository implements UniverseRepository {
     const patch: Record<string, boolean> = {};
     if (flags.researchEnabled !== undefined) patch.research_enabled = flags.researchEnabled;
     if (flags.shadowEnabled !== undefined) patch.shadow_enabled = flags.shadowEnabled;
-    if (flags.paperEnabled !== undefined) patch.paper_enabled = flags.paperEnabled;
+    // paper_enabled is intentionally not settable here - see
+    // UniverseRepository.setMemberFlags's doc comment (final pre-apply
+    // guardrail patch §6).
 
     const { error } = await this.client
       .from("universe_members")

@@ -611,3 +611,94 @@ column anywhere. SOL/XRP/BNB remain `paper_enabled = false` in every seed
 row; the migration itself is still NOT applied to the live Supabase
 project — no `mcp__Supabase__*` tool call, and no production database
 mutation, was made while producing this patch.
+
+## Checkpoint 2 — final pre-apply guardrail patch (2026-09-14, not yet applied)
+
+Requested after review of commit `3dd6b9791a148ec0fee08a84108b3d53c747670a`.
+Eight items, all schema-proposal/domain-code only — nothing applied to
+Supabase.
+
+1. **ELIGIBLE requires `eligibilityCheckedAt != null`.**
+   `selectEligibleResearchInstruments` (`lib/domain/universe.ts`) now
+   excludes an ELIGIBLE member whose `eligibilityCheckedAt` is still null.
+   The DB CHECK below should make that combination impossible to write in
+   the first place, but the domain filter doesn't trust that and checks
+   again — a row that somehow got there anyway (a bug, a manual fix) is
+   still refused, not assumed valid because the status string looks right.
+2. **DB CHECK `eligibility_checked_at_required_when_eligible`**:
+   `status <> 'ELIGIBLE' or checked_at is not null`. Verified against a
+   scratch database: `UPDATE ... SET status='ELIGIBLE'` (leaving
+   `checked_at` null) is rejected; the same UPDATE with
+   `checked_at = now()` succeeds.
+3. **`instrument_research_eligibility` is now read-only for every client
+   role, including owner.** The `owner_manage_eligibility` policy is gone
+   — there is no RLS-governed path for anyone using the publishable key to
+   write this table at all. A real eligibility verdict can only come from
+   a server-side job using the service-role key (bypasses RLS by design,
+   same pattern the scanner already uses for `instrument_metadata`), i.e.
+   an actual runtime provider check, never a person toggling something in
+   a UI.
+4. **`universe_members` gained a cross-table compatibility trigger**
+   (`validate_universe_member_compatibility`, `BEFORE INSERT OR UPDATE`):
+   rejects a member whose instrument's `asset_class` doesn't match the
+   universe's `asset_class`, or — when the universe pins a specific
+   `venue_id` — whose instrument is on a different venue. A plain `CHECK`
+   can't reference another table, so this had to be a trigger. Verified: a
+   CRYPTO_SPOT instrument added to a FOREX-classed universe is rejected
+   with a clear error naming both asset classes.
+5. **`instruments` gained a venue/asset-class compatibility trigger**
+   (`validate_instrument_venue_asset_class`, `BEFORE INSERT OR UPDATE`):
+   rejects an instrument whose `asset_class` isn't one of its venue's
+   declared `asset_classes`. Verified: inserting a FOREX instrument
+   pointed at the BYBIT venue (`asset_classes = {CRYPTO_SPOT}`) is
+   rejected.
+6. **`paperEnabled` removed from `UniverseRepository.setMemberFlags`'s
+   type entirely**, in both `InMemoryUniverseRepository` and
+   `SupabaseUniverseRepository` — not just left unused, the TypeScript
+   signature no longer accepts it (`Partial<Pick<UniverseMember,
+   "researchEnabled" | "shadowEnabled">>`). PAPER promotion needs its own
+   dedicated, more heavily guarded call path once one is designed — it
+   must not ride through the same generic call as a research/shadow
+   toggle. No such dedicated path exists in this checkpoint; nothing can
+   set `paper_enabled` true through the domain layer at all right now.
+7. **`lib/domain/exchange-rules.ts` validates finite, valid, positive
+   values**, not just presence. `checkExchangeRulesAvailable` now rejects
+   NaN, Infinity, zero, or negative `priceIncrement`/`sizeIncrement`
+   (which must be positive), and negative `minSize` (which may legitimately
+   be zero) — returning a typed `problems: string[]` naming exactly what's
+   wrong instead of the old boolean-only `missing` list.
+8. **`updated_at` is now enforced by the database, not application
+   discipline.** A shared `public.set_updated_at()` trigger function is
+   attached (`BEFORE UPDATE`) to `instruments`, `universes`,
+   `universe_members`, and `instrument_research_eligibility`. Verified:
+   updating an unrelated column on an `instruments` row bumps
+   `updated_at` automatically, with `created_at` unchanged.
+
+**Validation:** re-ran the full DDL/seed against a fresh scratch local
+PostgreSQL 16 database (same method as both prior checkpoints) — applies
+cleanly, idempotent on re-run (confirmed a second full apply produces only
+`INSERT 0`/"already exists, skipping" output, no errors), and every new
+trigger/constraint was exercised directly: the `updated_at` trigger bumps
+the timestamp on UPDATE; an incompatible instrument/venue pairing is
+rejected with the expected error; an incompatible universe-member pairing
+is rejected with the expected error; `UPDATE ... SET status='ELIGIBLE'`
+without `checked_at` is rejected, and the same UPDATE with `checked_at =
+now()` succeeds. Dropped the scratch database afterward — no
+`mcp__Supabase__*` tool call, no production database mutation.
+
+**Tests:** 550/550 passing (17 net-new over the 533 from the prior
+commit): the domain-level and DB-level ELIGIBLE+checked_at rule (both must
+hold independently), the two new compatibility triggers (static assertions
+plus live rejection/acceptance verified manually above), the
+finite/positive exchange-rule validation (NaN/Infinity/zero/negative cases
+individually), a compile-time proof that `setMemberFlags`'s flags type has
+no `paperEnabled` key, and static migration-safety checks for every item
+above. `npm run typecheck` / `npm run lint` (2 pre-existing warnings,
+unchanged) / `npm run build` all clean.
+
+**Confirmed unchanged:** Strategy V1, the scanner, the risk engine, the
+active 14-day PAPER research session and its AUTO policy, current PAPER
+equity, and every LIVE-disabled layer — none referenced by any edit in
+this patch. The migration remains NOT applied to the live Supabase
+project; main was not touched; nothing was deployed; Strategy V2 was not
+started.

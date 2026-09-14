@@ -294,3 +294,47 @@ applied to Supabase.
   actual `discoverBybitSpotInstruments()` run from the deployed environment
   may do that.
 - [x] 33 net-new tests (533 total, up from 500); typecheck/lint/build clean.
+
+## Checkpoint 2 — final pre-apply guardrail patch (not yet applied)
+
+Requested after review of commit `3dd6b9791a148ec0fee08a84108b3d53c747670a`.
+Full detail in `docs/BUILD_STATE.md`. Still schema-proposal-only; nothing
+applied to Supabase.
+
+1. [x] `selectEligibleResearchInstruments` now also requires
+   `eligibilityCheckedAt !== null` for ELIGIBLE — an ELIGIBLE row with no
+   checked_at is treated as a data bug, not trusted.
+2. [x] DB CHECK `eligibility_checked_at_required_when_eligible`:
+   `status <> 'ELIGIBLE' or checked_at is not null` — the database-level
+   twin of (1), holding even for a write that bypasses the app layer.
+3. [x] Removed the owner-mutation RLS policy from
+   `instrument_research_eligibility` entirely. It is now read-only for
+   every client role, owner included — an eligibility verdict may only
+   come from a server-side job using the service-role key (which bypasses
+   RLS by design), never from a UI toggle.
+4. [x] New trigger `validate_universe_member_compatibility` on
+   `universe_members`: rejects a member whose instrument's `asset_class`
+   doesn't match the universe's, or (when the universe pins a venue)
+   whose instrument is on a different venue.
+5. [x] New trigger `validate_instrument_venue_asset_class` on
+   `instruments`: rejects an instrument whose `asset_class` isn't in its
+   venue's `asset_classes`.
+6. [x] `paperEnabled` removed from `UniverseRepository.setMemberFlags`'s
+   type entirely (both implementations) — PAPER promotion needs its own
+   dedicated, more heavily guarded path, not a flag alongside
+   research/shadow selection. No such path exists yet.
+7. [x] `lib/domain/exchange-rules.ts` now rejects a present-but-malformed
+   value (NaN, Infinity, zero, or negative where positive is required),
+   not just a missing one — `checkExchangeRulesAvailable` returns typed
+   `problems` naming exactly what's wrong.
+8. [x] Shared `set_updated_at()` trigger function attached to `instruments`,
+   `universes`, `universe_members`, and `instrument_research_eligibility` —
+   `updated_at` is now enforced by the database on every UPDATE, not left
+   to application code to remember.
+- [x] 17 net-new tests (550 total, up from 533); typecheck/lint/build
+  clean. Re-validated the full DDL against a fresh scratch local
+  PostgreSQL 16 database: every new trigger/constraint fires correctly
+  (confirmed both the rejection and the accepting case for each), the
+  `updated_at` trigger actually bumps the timestamp on UPDATE, and the
+  full migration is still idempotent on re-run. Dropped afterward — no
+  Supabase MCP call, no production mutation.
