@@ -55,3 +55,74 @@
   `setWebhook` with a secret token header (`X-Telegram-Bot-Api-Secret-Token`)
   once a stable Vercel URL exists; verify the header on every inbound webhook
   request before processing callback queries.
+
+## Hard-test finding: Strategy V1 is unprofitable over a full year (2026-09-14)
+
+The 14-day window was extended into a hostile-testing programme, and the very
+first thing it produced was a decisive negative result. This is recorded
+prominently because it is the most important output of the exercise.
+
+### The baseline: exact, unchanged V1 over 365 days
+
+Real Bybit BTCUSDT and ETHUSDT data, 35,040 x 15m and 8,759 x 1h per symbol,
+the owner's own live risk settings, and the production strategy and sizing
+code. No tuning of any kind.
+
+| | |
+|---|---|
+| Trades | 489 |
+| Win rate | 31.9% (156W / 333L) |
+| Expectancy | **-0.653R** |
+| Profit factor | **0.51** |
+| Net P/L | -$1,318 on $1,000 starting equity |
+| Max drawdown | $1,351 |
+| Max losing streak | 14 |
+| Average MFE / MAE | 1.17R / 1.11R |
+
+### It is not an artefact of one period or one asset
+
+| Split | Trades | Expectancy |
+|---|---|---|
+| Development (in-sample) | 294 | -0.561R |
+| Validation | 98 | -0.775R |
+| Holdout (untouched) | 97 | **-0.811R** |
+| Walk-forward, unseen only (7 windows) | 342 | **-0.692R** |
+
+| Asset | Trades | Win rate | Expectancy | Profit factor |
+|---|---|---|---|---|
+| BTCUSDT | 256 | 26.7% | -0.886R | 0.39 |
+| ETHUSDT | 234 | 37.6% | -0.400R | 0.64 |
+
+Negative in every split, negative out-of-sample, negative in both assets, and
+worse out-of-sample than in-sample. There is no period or instrument where
+the edge lives.
+
+### It gets worse under realistic execution
+
+| Scenario | Expectancy |
+|---|---|
+| Modelled costs | -0.578R |
+| 1.5x fees and slippage | -0.831R |
+| 2x slippage | -0.685R |
+| 2x fees and slippage | -1.051R |
+
+### What the numbers suggest (hypotheses, not changes)
+
+- Average MFE (1.17R) is barely above average MAE (1.11R). Price moves about
+  as far against these setups as for them, which is what a 2R target on a
+  ~1R stop cannot survive.
+- The 2R target is reached rarely enough that a 31.9% win rate cannot pay for
+  the 68.1% of trades that pay a full stop plus costs.
+- `OPEN_POSITION_LIMIT` skipped 8,049 setups over the year. The
+  one-position-at-a-time rule is doing enormous selection, and which trade
+  gets taken is close to arbitrary - the first to arrive, not the best.
+
+None of these have been acted on. Strategy V1 is unchanged.
+
+### What this does NOT mean
+
+It does not mean the platform is wrong - the deterministic pipeline,
+risk engine, settlement and learning layer all behaved correctly, and the
+result is legible precisely because they did. It means the STRATEGY has no
+demonstrated edge, which is exactly what a research period is for finding out
+while everything is still PAPER.
