@@ -66,7 +66,9 @@ export function ResearchWindowCard({ view }: { view: ResearchWindowView }) {
         toast.error(json.error ?? "Request failed.");
         return;
       }
-      toast.success(successMessage);
+      // Surface the equity outcome rather than assuming the entered figure
+      // took effect - existing PAPER history is preserved, not overwritten.
+      toast.success(json.startingEquityNote ? `${successMessage} ${json.startingEquityNote}` : successMessage);
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Request failed.");

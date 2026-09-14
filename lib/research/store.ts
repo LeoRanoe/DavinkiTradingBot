@@ -123,6 +123,53 @@ export async function revertExecutionPolicyToApproval(
   return Boolean(data);
 }
 
+export type SeedEquityResult =
+  | { seeded: true; equity: number }
+  | { seeded: false; reason: "EXISTING_PAPER_HISTORY" | "ERROR"; detail?: string };
+
+/**
+ * Establishes the research experiment's starting PAPER equity as a real,
+ * persisted portfolio snapshot.
+ *
+ * This matters beyond bookkeeping: the risk engine reads equity from the
+ * latest snapshot and otherwise falls back to `INITIAL_PAPER_EQUITY`. Without
+ * this, a window declaring $20 would have its positions sized off the $10
+ * fallback - the stated experiment and the actual sizing would silently
+ * disagree.
+ *
+ * REFUSES to touch anything if any PAPER history already exists. A realized
+ * result is never rewritten to make a new experiment look tidy; an existing
+ * history simply continues from where it is.
+ */
+export async function seedInitialPaperEquity(
+  client: SupabaseClient<Database>,
+  equity: number,
+  nowIso: string,
+): Promise<SeedEquityResult> {
+  const [{ count: snapshotCount }, { count: tradeCount }] = await Promise.all([
+    client
+      .from("portfolio_snapshots")
+      .select("id", { count: "exact", head: true })
+      .eq("trading_mode", "PAPER"),
+    client.from("trades").select("id", { count: "exact", head: true }).eq("trading_mode", "PAPER"),
+  ]);
+
+  if ((snapshotCount ?? 0) > 0 || (tradeCount ?? 0) > 0) {
+    return { seeded: false, reason: "EXISTING_PAPER_HISTORY" };
+  }
+
+  const { error } = await client.from("portfolio_snapshots").insert({
+    trading_mode: "PAPER",
+    equity,
+    balance: equity,
+    open_risk: 0,
+    taken_at: nowIso,
+  });
+
+  if (error) return { seeded: false, reason: "ERROR", detail: error.message };
+  return { seeded: true, equity };
+}
+
 /** Owner-initiated early stop. Never sends the completion notification path. */
 export async function cancelResearchWindow(
   client: SupabaseClient<Database>,

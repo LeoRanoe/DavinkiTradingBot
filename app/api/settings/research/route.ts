@@ -5,6 +5,7 @@ import { isOwner } from "@/lib/auth/authorization";
 import {
   cancelResearchWindow,
   loadCurrentResearchWindow,
+  seedInitialPaperEquity,
   startResearchWindow,
 } from "@/lib/research/store";
 import { buildResearchReportFor } from "@/lib/research/evidence";
@@ -134,6 +135,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: result.reason }, { status: 409 });
   }
 
+  // Make the declared starting equity real. The risk engine sizes from the
+  // latest portfolio snapshot, so without this the experiment would state one
+  // figure and size positions from another. Existing PAPER history is never
+  // rewritten - in that case the run simply continues from where it stands.
+  const seeded = await seedInitialPaperEquity(supabase, startingEquity, new Date().toISOString());
+
   await supabase.from("audit_events").insert({
     actor: user.email ?? user.id,
     action: "paper_research_window_started",
@@ -147,5 +154,16 @@ export async function POST(request: NextRequest) {
     },
   });
 
-  return NextResponse.json({ ok: true, window: result.window });
+  return NextResponse.json({
+    ok: true,
+    window: result.window,
+    startingEquitySeeded: seeded.seeded,
+    // Stated plainly rather than silently: the owner should know whether the
+    // run starts from the figure they entered or from existing history.
+    startingEquityNote: seeded.seeded
+      ? `PAPER equity initialized at $${startingEquity.toFixed(2)}.`
+      : seeded.reason === "EXISTING_PAPER_HISTORY"
+        ? "Existing PAPER history was preserved; the run continues from current equity rather than the requested starting figure."
+        : `Could not initialize starting equity: ${seeded.detail ?? "unknown error"}.`,
+  });
 }
