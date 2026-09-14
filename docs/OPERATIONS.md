@@ -37,7 +37,13 @@ Auth mirrors the scan job exactly: the Vault-held scanner credential
 exchanged for a short-lived JWT by an Edge proxy, with `CRON_SECRET` as a
 manual fallback.
 
-### Activating the schedule (not yet done)
+### Activating the schedule (DONE - 2026-09-14)
+
+The Edge function `davinki-news-proxy` is deployed and the cron entry is
+described below. News failure never blocks PAPER execution: the scanner
+treats missing news as UNKNOWN context and proceeds.
+
+### Original activation notes
 
 `supabase/functions/davinki-news-proxy/index.ts` is ready but is NOT
 deployed or scheduled. Activating it before the application code that serves
@@ -196,3 +202,53 @@ missing or rotated key surfaces as a clear "server configuration error"
 acknowledgement with nothing executed, rather than a 500 that Telegram would
 retry. Replacing that key with a narrowly-scoped capability remains open -
 see `docs/BUILD_STATE.md`.
+
+## Automatic PAPER research window (Milestone 6)
+
+`system_settings.execution_policy` records what the owner CONFIGURED. What
+the system DOES is `effectiveExecutionPolicy()`, which additionally requires
+PAPER mode and an ACTIVE row in `paper_research_sessions`. This distinction
+is the safety property of the whole feature:
+
+- AUTO stops when the window elapses **on elapsed time alone**. No write, no
+  job run, and no deploy is needed for that to happen. A scan that never runs
+  cannot extend automatic execution past the end date.
+- The scanner additionally reconciles the stored state on its next run
+  (PHASE 0): it flips the row to EXPIRED, reverts `execution_policy` to
+  APPROVAL_REQUIRED, and sends exactly one completion notification. The
+  ACTIVE -> EXPIRED update and the notification claim are the same atomic
+  compare-and-set, so overlapping scans cannot double-notify.
+
+### Checking what is actually in force
+
+```sql
+select trading_mode, execution_policy from system_settings;
+select id, started_at, ends_at, status, starting_equity, target_equity
+from paper_research_sessions order by started_at desc;
+```
+
+`execution_policy = 'AUTO'` alone does NOT mean automatic execution is
+running. Confirm an ACTIVE window whose `ends_at` is still in the future, or
+read `metadata->>'executionPolicy'` on the newest `scan` row in `job_runs` -
+that field records the policy that was actually in force for that run.
+
+### Stopping early
+
+Either stop the window from Settings -> Trading & risk, or:
+
+```sql
+update paper_research_sessions set status = 'CANCELLED', ended_at = now()
+ where status = 'ACTIVE';
+update system_settings set execution_policy = 'APPROVAL_REQUIRED' where id = true;
+```
+
+The first statement is sufficient to stop automatic execution; the second
+only makes the stored configuration agree with what the system is already
+doing.
+
+### What a window does NOT do
+
+It never changes `strategy_versions.status`. Strategy V1 stays DRAFT
+throughout and afterwards. The evidence report can only ever recommend
+KEEP DRAFT or OWNER REVIEW FOR PAPER APPROVAL, and a human applies the
+latter. Nothing in this system promotes a strategy on its own.
