@@ -126,3 +126,47 @@ risk engine, settlement and learning layer all behaved correctly, and the
 result is legible precisely because they did. It means the STRATEGY has no
 demonstrated edge, which is exactly what a research period is for finding out
 while everything is still PAPER.
+
+## Assembled hard-test report (day 0)
+
+`POST /api/jobs/research-report` assembles sections 1-7 and the three-way
+recommendation from what is already persisted: the actual PAPER window, the
+stored historical stages, and the counterfactual shadow set. It is read-only -
+it computes a recommendation and has no code path that acts on one.
+
+Run on 2026-09-14T01:27:59Z, with the research window one hour old, it returns:
+
+```
+RECOMMENDATION: KEEP_DRAFT
+
+  [FAIL] (blocking) Actual PAPER sample size
+         Only 0 completed PAPER trades; 20 is the minimum before a result is
+         anything more than an anecdote.
+  [FAIL] (blocking) Actual PAPER expectancy
+         Actual PAPER: no resolved trades to measure.
+  [FAIL] (blocking) Untouched holdout
+         Holdout (97 trades) expectancy -0.811R after costs - not positive.
+  [FAIL] (blocking) Walk-forward on unseen periods
+         Walk-forward unseen (7 windows) expectancy -0.692R after costs.
+  [FAIL] (blocking) Transaction-cost stress
+         The edge disappears under worse execution: 1.5x fees and slippage,
+         2x slippage, 2x fees and slippage.
+  [PASS] (blocking) Parameter robustness
+  [PASS] (blocking) Environment concentration
+  [FAIL]           Score band correlation  (non-blocking)
+```
+
+The two PAPER gates fail only because the window has just opened - that is the
+report refusing to draw a conclusion from an empty sample rather than a verdict,
+and section 1 says so in words ("No trade is a valid outcome for a selective
+strategy"). The other three are the real finding, and they will not be changed
+by fourteen days of live PAPER: a strategy that is negative on an untouched
+holdout, negative on every unseen walk-forward window, and worse under every
+cost scenario does not become approvable because two weeks happen to come out
+green.
+
+Re-running the endpoint on day 14 will recompute section 1 from whatever the
+window actually produced. The recommendation can only move to
+`OWNER_REVIEW_FOR_PAPER_APPROVAL` if every blocking gate passes, and even then
+it is a request for human review - nothing in this system can promote Strategy
+V1 out of DRAFT.
