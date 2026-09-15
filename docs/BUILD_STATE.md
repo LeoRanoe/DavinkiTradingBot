@@ -914,3 +914,108 @@ window, `paper_enabled = true` count still `0`. Nothing in
 `lib/trading/` was touched. No runtime eligibility check was performed or
 faked — all five instruments remain `UNKNOWN`/`checked_at NULL`. Strategy
 V2 was not started. `main` was not touched; nothing was deployed.
+
+## Checkpoint 2.1 — function search_path hardening, applied live (2026-09-15)
+
+Pure security-hardening follow-up to Checkpoint 2's already-applied
+migration, at commit `267d1936346d3ef1f52e6b8e3983487f3164d617`. Scope:
+clear the Supabase Security Advisor's `function_search_path_mutable`
+(WARN) finding on the seven functions Checkpoint 2 introduced. Nothing
+else.
+
+**New migration**: `supabase/migrations/20260915110000_harden_multi_market_function_search_paths.sql`.
+`20260914130000_multi_market_universe.sql` was not edited.
+
+**Body review before hardening** (required, since an empty `search_path`
+breaks any unqualified table reference): re-read all seven function
+bodies in the applied Checkpoint 2 migration. Every table reference in
+every one of them was already written `public.venues` /
+`public.instruments` / `public.universes` / `public.universe_members` —
+never a bare name. The only unqualified identifiers used anywhere are
+`now()`, `cardinality()`, `count()`, and the `= any(array)` construct, all
+`pg_catalog` built-ins that Postgres always searches first regardless of
+`search_path`. None of the seven reference an `extensions`-schema object
+(`gen_random_uuid()` only appears in table column `DEFAULT`s, not inside
+any of these function bodies). Conclusion: `SET search_path = ''` is safe
+for all seven with zero body changes — confirmed by the local scratch-DB
+regression run below before touching production.
+
+**Approach**: `ALTER FUNCTION public.<name>(<exact signature>) SET
+search_path = '';` for each — configuration-only, no `CREATE OR REPLACE`,
+idempotent. None of the seven were ever `SECURITY DEFINER` and none
+becomes one; each stays `SECURITY INVOKER`.
+
+**Local validation** (scratch PostgreSQL 16, before any live change):
+applied the full Checkpoint 2 base DDL, then this hardening migration —
+both applied cleanly; `pg_proc.proconfig` for all seven showed
+`{"search_path=\"\""}`; re-ran the migration a second time (idempotent,
+all `ALTER FUNCTION`, no error); ran all ten regression scenarios from §8
+— every one behaved identically to the pre-hardening state. Dropped the
+scratch database afterward.
+
+**Live apply**: `mcp__Supabase__apply_migration` → `{"success":true}`.
+
+**Live `pg_proc` verification** (all seven, via a single query joining
+`pg_proc`/`pg_namespace`):
+
+| Function | `security_definer` | `proconfig` |
+|---|---|---|
+| `set_updated_at` | false | `{"search_path=\"\""}` |
+| `venue_asset_classes_are_valid` | false | `{"search_path=\"\""}` |
+| `validate_instrument_venue_asset_class` | false | `{"search_path=\"\""}` |
+| `validate_universe_member_compatibility` | false | `{"search_path=\"\""}` |
+| `validate_universe_update_against_members` | false | `{"search_path=\"\""}` |
+| `validate_instrument_update_against_memberships` | false | `{"search_path=\"\""}` |
+| `validate_venue_update_against_instruments` | false | `{"search_path=\"\""}` |
+
+None has `proconfig IS NULL` for `search_path` any longer; all remain
+`SECURITY INVOKER`.
+
+**Security Advisor, before → after** (both calls to
+`mcp__Supabase__get_advisors`, type `security`):
+- **Before**: 8 findings total — 7× `function_search_path_mutable` (one
+  per Checkpoint 2 function) + `authenticated_security_definer_function_executable`
+  (6 pre-existing `owner_*` RPCs) + `auth_leaked_password_protection`.
+- **After**: 2 findings — the same `authenticated_security_definer_function_executable`
+  and `auth_leaked_password_protection`, unchanged. **All 7
+  `function_search_path_mutable` findings are gone.**
+- The two remaining findings predate this migration and Checkpoint 2
+  entirely (the `owner_*` guest/integration-config RPCs, and Supabase
+  Auth's leaked-password-protection toggle) — explicitly out of scope for
+  this task and not touched.
+
+**Regression, live, all rollback-only (10/10, §8):**
+
+| # | Check | Result |
+|---|---|---|
+| 1 | `updated_at` trigger still bumps on UPDATE | pass |
+| 2 | Valid universe membership insert succeeds | pass |
+| 3 | Instrument/universe asset-class mismatch on membership insert rejected | pass |
+| 4 | Wrong-venue membership insert rejected | pass |
+| 5 | Venue/instrument asset-class mismatch on instrument insert rejected | pass |
+| 6 | Parent universe `asset_class` UPDATE that breaks members rejected | pass |
+| 7 | Parent instrument `asset_class` UPDATE that breaks memberships rejected | pass |
+| 8 | Venue `asset_classes` shrink that strands an instrument rejected | pass |
+| 9 | ELIGIBLE + `checked_at` NULL still rejected | pass |
+| 10 | ELIGIBLE + `checked_at` populated still accepted (then rolled back) | pass |
+
+A final row-count query after all of the above confirmed exactly the
+original 1/5/1/5/5 rows, `paper_enabled=true` count still `0`, and every
+eligibility row still `UNKNOWN`/`NULL` — no test left any residue.
+
+**Tests**: 562/562 passing (5 net-new — static checks on the new
+migration file: exact-signature `ALTER FUNCTION` coverage for all seven,
+no `CREATE FUNCTION`/table/policy/trigger statement anywhere in it, and a
+check that every referenced table in the seven original function bodies
+is `public.`-qualified). `npm run typecheck` / `npm run lint` (2
+pre-existing warnings, unchanged) / `npm run build` all clean.
+
+**Production safety, re-confirmed live after the apply:**
+`strategy_versions.v1.status = DRAFT`; `system_settings.trading_mode =
+PAPER`; `system_settings.live_trading_enabled = false`; research session
+`82058733-...` still `status = ACTIVE` with its original window;
+`count(universe_members where paper_enabled = true) = 0`; all five
+research instruments still `status = UNKNOWN`, `checked_at = NULL`. No
+runtime venue eligibility check was run. `lib/strategy/v1/`,
+`app/api/jobs/scan/route.ts`, `lib/risk/`, `lib/trading/` untouched.
+Strategy V2 not started; `main` not touched; nothing deployed.

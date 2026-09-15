@@ -432,3 +432,39 @@ verification detail in `docs/BUILD_STATE.md`.
   research session still `ACTIVE`, `paper_enabled=true` count still 0.
 - [x] Not started: runtime eligibility flips (all five stay UNKNOWN/NULL),
   Strategy V2 (TRB/MA/TSMOM/BBMR/shadow execution).
+
+## Checkpoint 2.1 — security hardening: function search_path (applied live, 2026-09-15)
+
+New migration `supabase/migrations/20260915110000_harden_multi_market_function_search_paths.sql`,
+applied to `davinki-trading-bot`. Pins `search_path = ''` on all seven
+Checkpoint 2 functions via `ALTER FUNCTION ... SET` (no body rewrites —
+every table reference in all seven was already `public.`-qualified;
+the only unqualified identifiers are `pg_catalog` built-ins, always
+searched regardless of `search_path`). Full detail in `docs/BUILD_STATE.md`.
+
+- [x] Did not edit `20260914130000_multi_market_universe.sql`.
+- [x] All seven functions remain `SECURITY INVOKER` (`prosecdef = false`),
+  confirmed live via `pg_proc`.
+- [x] `pg_proc.proconfig` confirmed live for all seven:
+  `{"search_path=\"\""}`.
+- [x] Security Advisor: the 7 `function_search_path_mutable` findings are
+  gone after apply (confirmed with a before/after `get_advisors` call).
+  Two unrelated, pre-existing findings remain
+  (`authenticated_security_definer_function_executable` on the `owner_*`
+  RPCs, `auth_leaked_password_protection`) — not touched, per exact scope.
+- [x] 10/10 regression checks re-verified live, all rollback-only, all
+  behaving identically to before hardening: `updated_at` trigger still
+  bumps; valid membership still succeeds; wrong asset-class and wrong-venue
+  member inserts still rejected; instrument/venue asset-class mismatch
+  still rejected on instrument insert; all three parent-mutation triggers
+  (universe asset_class, instrument asset_class, venue asset_classes
+  shrink) still rejected; ELIGIBLE+null `checked_at` still rejected,
+  ELIGIBLE+populated `checked_at` still accepted. Zero residual test rows
+  afterward — seed counts (1/5/1/5/5, 0 paper_enabled, 0 non-UNKNOWN
+  eligibility) unchanged.
+- [x] 562/562 tests passing (5 net-new — static checks on the new
+  migration file); typecheck/lint/build clean.
+- [x] Production safety re-confirmed live post-apply: V1 `DRAFT`,
+  `trading_mode=PAPER`, `live_trading_enabled=false`, research session
+  still `ACTIVE`, `paper_enabled=true` count still 0, all five instruments
+  still `UNKNOWN`/`checked_at NULL`.
