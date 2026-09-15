@@ -373,3 +373,62 @@ already-compatible children. Full detail in `docs/BUILD_STATE.md`.
   an instrument rejected, a widen accepted) — plus a second full apply
   confirming the migration is still idempotent. Dropped the scratch
   database afterward — no Supabase MCP call, no production mutation.
+
+## Checkpoint 2 — MIGRATION APPLIED to live Supabase (2026-09-15)
+
+Approved commit `03e008fcfb9be4f1e31807dc3ae4559660c81af9` applied to
+`davinki-trading-bot` (`xvklitfcesprzbnfslks`) via
+`supabase/migrations/20260914130000_multi_market_universe.sql`. Full
+verification detail in `docs/BUILD_STATE.md`.
+
+- [x] Pre-apply: confirmed branch `claude/practical-davinci-6sejvp` at
+  exactly `03e008f...`; confirmed live `trading_mode=PAPER`,
+  `live_trading_enabled=false`, `strategy_versions.v1.status=DRAFT`,
+  research session `82058733-...` still `ACTIVE`, `instrument_metadata`
+  still only BTC/ETH — all as before.
+- [x] Migration applied. Five tables created: `venues`, `instruments`,
+  `universes`, `universe_members`, `instrument_research_eligibility`.
+- [x] Seed state verified live: venue `BYBIT`; universe `crypto-core`;
+  BTC/ETH/SOL/XRP/BNB all `research_enabled=true`,
+  `shadow_enabled=false`, `paper_enabled=false`; eligibility all
+  `status=UNKNOWN`, `checked_at=NULL` for all five.
+- [x] Safety constraints and all five triggers verified live with
+  rollback-only transactions (`eligibility_checked_at_required_when_eligible`;
+  `validate_instrument_venue_asset_class`;
+  `validate_universe_member_compatibility`;
+  `validate_universe_update_against_members`;
+  `validate_instrument_update_against_memberships`;
+  `validate_venue_update_against_instruments`) — every rejection and
+  acceptance case fired exactly as designed; confirmed zero residual rows
+  from any test afterward.
+- [x] RLS verified via `pg_policies`: all five tables readable by
+  `authenticated`; `instruments`/`universes`/`universe_members` each have
+  exactly one owner-scoped `ALL` policy; `instrument_research_eligibility`
+  has no mutation policy at all; no `anon` policy anywhere.
+- [x] `count(universe_members where paper_enabled=true) = 0`, confirmed
+  live.
+- [x] `lib/supabase/database.types.ts` regenerated from the live schema;
+  `SupabaseUniverseRepository` switched from an untyped `SupabaseClient` to
+  `SupabaseClient<Database>` (behavior unchanged, only compile-time column
+  safety added).
+- [x] 557/557 tests still passing after the type switch;
+  typecheck/lint/build all clean.
+- [ ] **Security advisor finding (new, from this migration):** all 7
+  functions this migration created (`set_updated_at`,
+  `venue_asset_classes_are_valid`, `validate_instrument_venue_asset_class`,
+  `validate_universe_member_compatibility`,
+  `validate_universe_update_against_members`,
+  `validate_instrument_update_against_memberships`,
+  `validate_venue_update_against_instruments`) have a mutable
+  `search_path` (Supabase linter `function_search_path_mutable`, WARN).
+  Not fixed in this checkpoint per its exact scope — flagged for a small,
+  dedicated follow-up migration (`ALTER FUNCTION ... SET search_path = ''`
+  on each, additive-only). The other two advisor findings
+  (`authenticated_security_definer_function_executable` on the pre-existing
+  `owner_*` RPCs, and `auth_leaked_password_protection`) predate this
+  migration and are unrelated to it.
+- [x] Confirmed unchanged after apply: `trading_mode=PAPER`,
+  `live_trading_enabled=false`, `strategy_versions.v1.status=DRAFT`,
+  research session still `ACTIVE`, `paper_enabled=true` count still 0.
+- [x] Not started: runtime eligibility flips (all five stay UNKNOWN/NULL),
+  Strategy V2 (TRB/MA/TSMOM/BBMR/shadow execution).

@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
 import type { AssetClass, Instrument, InstrumentId, VenueId } from "../instrument";
 import {
   selectEligibleResearchInstruments,
@@ -10,70 +11,32 @@ import {
 import type { ResearchEligibilityStatus } from "../eligibility";
 
 /**
- * Supabase-backed UniverseRepository against the tables proposed in
- * supabase/migrations/20260914130000_multi_market_universe.sql.
+ * Supabase-backed UniverseRepository against the tables in
+ * supabase/migrations/20260914130000_multi_market_universe.sql, applied to
+ * the live project 2026-09-15 (see docs/BUILD_STATE.md "Checkpoint 2 —
+ * migration applied"). Types below are now checked against the generated
+ * `Database` type (lib/supabase/database.types.ts, regenerated from the
+ * live schema after the apply) rather than hand-typed row shapes.
  *
- * NOT WIRED INTO ANY ROUTE. That migration has not been applied to the
- * live project (Checkpoint 2 is schema-design-only per instruction — see
- * docs/BUILD_STATE.md). This class exists so the repository shape is
- * proven and unit-testable now; every test against it mocks the Supabase
- * client rather than hitting a real database.
- *
- * Deliberately untyped against `Database` (lib/supabase/database.types.ts):
- * that file is generated FROM the live schema, and the new tables don't
- * exist there yet. Once the migration is reviewed and applied, regenerate
- * types and this can switch to `SupabaseClient<Database>` for compile-time
- * column safety.
+ * NOT WIRED INTO ANY ROUTE YET — no scanner, job, or UI reads or writes
+ * through this class. It exists as a proven, unit-tested repository ready
+ * for Checkpoint 3+ to use.
  */
 
-type InstrumentRow = {
-  id: string;
-  canonical_id: string;
-  asset_class: string;
-  venue_id: string;
-  venue_symbol: string;
-  base_asset: string;
-  quote_asset: string;
-  settlement_asset: string;
-  // Nullable, provider-owned exchange rules (Checkpoint 2 review §3) — never
-  // defaulted here to 0/1 on read; a missing value stays missing.
-  price_increment: number | null;
-  size_increment: number | null;
-  min_size: number | null;
-  max_size: number | null;
-  contract_multiplier: number | null;
-  pip_size: number | null;
-  lot_size: number | null;
-  allows_long: boolean;
-  allows_short: boolean;
-  trading_calendar: string;
-  is_active: boolean;
-  metadata: Record<string, unknown>;
-};
+type InstrumentRow = Database["public"]["Tables"]["instruments"]["Row"];
+type UniverseRow = Database["public"]["Tables"]["universes"]["Row"];
+type EligibilityRow = Database["public"]["Tables"]["instrument_research_eligibility"]["Row"];
 
-type UniverseRow = {
-  id: string;
-  key: string;
-  name: string;
-  purpose: string;
-  asset_class: string;
-  venue_id: string | null;
-  enabled: boolean;
-};
-
-type UniverseMemberRow = {
-  universe_id: string;
-  instrument_id: string;
-  research_enabled: boolean;
-  shadow_enabled: boolean;
-  paper_enabled: boolean;
-  instruments: InstrumentRow; // joined
-};
-
-type EligibilityRow = {
-  instrument_id: string;
-  status: string;
-  checked_at: string | null;
+// The universe_members SELECT below only requests a subset of columns plus
+// an embedded `instruments(*)` relation - the generated client type doesn't
+// model that shape directly, so this is a Pick of the real columns (still
+// checked against the generated Row, so a renamed/removed column fails
+// typecheck) joined with the real InstrumentRow for the embed.
+type UniverseMemberRow = Pick<
+  Database["public"]["Tables"]["universe_members"]["Row"],
+  "universe_id" | "instrument_id" | "research_enabled" | "shadow_enabled" | "paper_enabled"
+> & {
+  instruments: InstrumentRow;
 };
 
 function rowToInstrument(row: InstrumentRow): Instrument {
@@ -96,7 +59,7 @@ function rowToInstrument(row: InstrumentRow): Instrument {
     allowsShort: row.allows_short,
     tradingCalendarId: row.trading_calendar as Instrument["tradingCalendarId"],
     isActive: row.is_active,
-    metadata: row.metadata,
+    metadata: (row.metadata ?? {}) as Record<string, unknown>,
   };
 }
 
@@ -113,12 +76,12 @@ function rowToUniverse(r: UniverseRow): UniverseDefinition {
 }
 
 export class SupabaseUniverseRepository implements UniverseRepository {
-  constructor(private readonly client: SupabaseClient) {}
+  constructor(private readonly client: SupabaseClient<Database>) {}
 
   async listInstruments(): Promise<Instrument[]> {
     const { data, error } = await this.client.from("instruments").select("*").eq("is_active", true);
     if (error) throw error;
-    return ((data ?? []) as InstrumentRow[]).map(rowToInstrument);
+    return (data ?? []).map(rowToInstrument);
   }
 
   async getInstrument(instrumentId: InstrumentId): Promise<Instrument | null> {
@@ -128,19 +91,19 @@ export class SupabaseUniverseRepository implements UniverseRepository {
       .eq("canonical_id", instrumentId)
       .maybeSingle();
     if (error) throw error;
-    return data ? rowToInstrument(data as InstrumentRow) : null;
+    return data ? rowToInstrument(data) : null;
   }
 
   async listUniverses(): Promise<UniverseDefinition[]> {
     const { data, error } = await this.client.from("universes").select("*");
     if (error) throw error;
-    return ((data ?? []) as UniverseRow[]).map(rowToUniverse);
+    return (data ?? []).map(rowToUniverse);
   }
 
   async getUniverse(key: string): Promise<UniverseDefinition | null> {
     const { data, error } = await this.client.from("universes").select("*").eq("key", key).maybeSingle();
     if (error) throw error;
-    return data ? rowToUniverse(data as UniverseRow) : null;
+    return data ? rowToUniverse(data) : null;
   }
 
   /**
@@ -173,7 +136,7 @@ export class SupabaseUniverseRepository implements UniverseRepository {
         .select("instrument_id, status, checked_at")
         .in("instrument_id", instrumentIds);
       if (eligibilityError) throw eligibilityError;
-      for (const row of (eligibilityRows ?? []) as EligibilityRow[]) {
+      for (const row of (eligibilityRows ?? []) as Pick<EligibilityRow, "instrument_id" | "status" | "checked_at">[]) {
         eligibilityByInstrumentId.set(row.instrument_id, {
           status: row.status as ResearchEligibilityStatus,
           checkedAt: row.checked_at ? new Date(row.checked_at).getTime() : null,
@@ -230,7 +193,7 @@ export class SupabaseUniverseRepository implements UniverseRepository {
     if (lookupError) throw lookupError;
     if (!instrumentRow) throw new Error(`Unknown instrument: ${instrumentId}`);
 
-    const patch: Record<string, boolean> = {};
+    const patch: Database["public"]["Tables"]["universe_members"]["Update"] = {};
     if (flags.researchEnabled !== undefined) patch.research_enabled = flags.researchEnabled;
     if (flags.shadowEnabled !== undefined) patch.shadow_enabled = flags.shadowEnabled;
     // paper_enabled is intentionally not settable here - see
@@ -241,7 +204,7 @@ export class SupabaseUniverseRepository implements UniverseRepository {
       .from("universe_members")
       .update(patch)
       .eq("universe_id", universe.id)
-      .eq("instrument_id", (instrumentRow as { id: string }).id);
+      .eq("instrument_id", instrumentRow.id);
     if (error) throw error;
   }
 }

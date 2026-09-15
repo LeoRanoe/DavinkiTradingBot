@@ -453,6 +453,130 @@ export type Database = {
         }
         Relationships: []
       }
+      instrument_research_eligibility: {
+        Row: {
+          checked_at: string | null
+          created_at: string
+          instrument_id: string
+          metrics: Json
+          reasons: string[]
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          checked_at?: string | null
+          created_at?: string
+          instrument_id: string
+          metrics?: Json
+          reasons?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          checked_at?: string | null
+          created_at?: string
+          instrument_id?: string
+          metrics?: Json
+          reasons?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instrument_research_eligibility_instrument_id_fkey"
+            columns: ["instrument_id"]
+            isOneToOne: true
+            referencedRelation: "instruments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instruments: {
+        Row: {
+          allows_long: boolean
+          allows_short: boolean
+          asset_class: string
+          base_asset: string
+          canonical_id: string
+          contract_multiplier: number | null
+          created_at: string
+          id: string
+          is_active: boolean
+          lot_size: number | null
+          max_size: number | null
+          metadata: Json
+          min_notional: number | null
+          min_size: number | null
+          pip_size: number | null
+          price_increment: number | null
+          quote_asset: string
+          settlement_asset: string
+          size_increment: number | null
+          trading_calendar: string
+          updated_at: string
+          venue_id: string
+          venue_symbol: string
+        }
+        Insert: {
+          allows_long?: boolean
+          allows_short?: boolean
+          asset_class: string
+          base_asset: string
+          canonical_id: string
+          contract_multiplier?: number | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          lot_size?: number | null
+          max_size?: number | null
+          metadata?: Json
+          min_notional?: number | null
+          min_size?: number | null
+          pip_size?: number | null
+          price_increment?: number | null
+          quote_asset: string
+          settlement_asset: string
+          size_increment?: number | null
+          trading_calendar?: string
+          updated_at?: string
+          venue_id: string
+          venue_symbol: string
+        }
+        Update: {
+          allows_long?: boolean
+          allows_short?: boolean
+          asset_class?: string
+          base_asset?: string
+          canonical_id?: string
+          contract_multiplier?: number | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          lot_size?: number | null
+          max_size?: number | null
+          metadata?: Json
+          min_notional?: number | null
+          min_size?: number | null
+          pip_size?: number | null
+          price_increment?: number | null
+          quote_asset?: string
+          settlement_asset?: string
+          size_increment?: number | null
+          trading_calendar?: string
+          updated_at?: string
+          venue_id?: string
+          venue_symbol?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instruments_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_credentials: {
         Row: {
           config: Json
@@ -1730,6 +1854,125 @@ export type Database = {
           },
         ]
       }
+      universe_members: {
+        Row: {
+          added_at: string
+          id: string
+          instrument_id: string
+          paper_enabled: boolean
+          research_enabled: boolean
+          shadow_enabled: boolean
+          universe_id: string
+          updated_at: string
+        }
+        Insert: {
+          added_at?: string
+          id?: string
+          instrument_id: string
+          paper_enabled?: boolean
+          research_enabled?: boolean
+          shadow_enabled?: boolean
+          universe_id: string
+          updated_at?: string
+        }
+        Update: {
+          added_at?: string
+          id?: string
+          instrument_id?: string
+          paper_enabled?: boolean
+          research_enabled?: boolean
+          shadow_enabled?: boolean
+          universe_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "universe_members_instrument_id_fkey"
+            columns: ["instrument_id"]
+            isOneToOne: false
+            referencedRelation: "instruments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "universe_members_universe_id_fkey"
+            columns: ["universe_id"]
+            isOneToOne: false
+            referencedRelation: "universes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      universes: {
+        Row: {
+          asset_class: string
+          created_at: string
+          enabled: boolean
+          id: string
+          key: string
+          name: string
+          notes: string | null
+          purpose: string
+          updated_at: string
+          venue_id: string | null
+        }
+        Insert: {
+          asset_class: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          key: string
+          name: string
+          notes?: string | null
+          purpose: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Update: {
+          asset_class?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          key?: string
+          name?: string
+          notes?: string | null
+          purpose?: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "universes_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      venues: {
+        Row: {
+          asset_classes: string[]
+          created_at: string
+          id: string
+          name: string
+          notes: string | null
+        }
+        Insert: {
+          asset_classes: string[]
+          created_at?: string
+          id: string
+          name: string
+          notes?: string | null
+        }
+        Update: {
+          asset_classes?: string[]
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string | null
+        }
+        Relationships: []
+      }
       weekly_reports: {
         Row: {
           created_at: string
@@ -1802,6 +2045,10 @@ export type Database = {
       owner_set_integration_configuration: {
         Args: { p_config?: Json; p_integration: string; p_secret?: string }
         Returns: undefined
+      }
+      venue_asset_classes_are_valid: {
+        Args: { classes: string[] }
+        Returns: boolean
       }
     }
     Enums: {

@@ -1,12 +1,15 @@
 import { describe, expect, it, vi } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/database.types";
 import { SupabaseUniverseRepository } from "../repository/supabase-universe-repository";
 
 /**
  * These tests mock the Supabase client entirely - they never touch a real
- * database. The tables this repository targets
- * (supabase/migrations/20260914130000_multi_market_universe.sql) have NOT
- * been applied to the live project; that migration is proposed only.
+ * database, even though the tables this repository targets
+ * (supabase/migrations/20260914130000_multi_market_universe.sql) are now
+ * applied to the live project (2026-09-15). This class is still not wired
+ * into any route/job, so exercising it against a mock keeps these tests
+ * fast and independent of live data.
  */
 
 const instrumentRow = {
@@ -67,7 +70,7 @@ describe("SupabaseUniverseRepository", () => {
       if (table === "instrument_research_eligibility") return makeQueryBuilder({ data: eligibilityRows, error: null });
       throw new Error(`unexpected table ${table}`);
     });
-    const client = { from } as unknown as SupabaseClient;
+    const client = { from } as unknown as SupabaseClient<Database>;
 
     const repo = new SupabaseUniverseRepository(client);
     const members = await repo.listUniverseMembers("crypto-core");
@@ -101,7 +104,7 @@ describe("SupabaseUniverseRepository", () => {
       if (table === "universe_members") return makeQueryBuilder({ data: memberRows, error: null });
       return makeQueryBuilder({ data: [], error: null });
     });
-    const client = { from } as unknown as SupabaseClient;
+    const client = { from } as unknown as SupabaseClient<Database>;
 
     const repo = new SupabaseUniverseRepository(client);
     const members = await repo.listUniverseMembers("crypto-core");
@@ -129,7 +132,7 @@ describe("SupabaseUniverseRepository", () => {
       if (table === "instrument_research_eligibility") return makeQueryBuilder({ data: eligibilityRows, error: null });
       throw new Error(`unexpected table ${table}`);
     });
-    const client = { from } as unknown as SupabaseClient;
+    const client = { from } as unknown as SupabaseClient<Database>;
 
     const repo = new SupabaseUniverseRepository(client);
     const members = await repo.listUniverseMembers("crypto-core");
@@ -152,7 +155,7 @@ describe("SupabaseUniverseRepository", () => {
       if (table === "universes") return makeQueryBuilder({ data: universeRow, error: null });
       return makeQueryBuilder({ data: memberRows, error: null });
     });
-    const client = { from } as unknown as SupabaseClient;
+    const client = { from } as unknown as SupabaseClient<Database>;
 
     const repo = new SupabaseUniverseRepository(client);
     expect(await repo.getResearchUniverse("crypto-core")).toEqual([]);
@@ -165,7 +168,7 @@ describe("SupabaseUniverseRepository", () => {
         if (table === "universe_members") return makeQueryBuilder({ data: memberRows, error: null });
         return makeQueryBuilder({ data: [], error: null });
       });
-      return new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      return new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
     }
 
     it("RESEARCH_ENABLED + UNKNOWN -> NOT eligible (no eligibility row at all)", async () => {
@@ -187,7 +190,7 @@ describe("SupabaseUniverseRepository", () => {
           return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "INELIGIBLE", checked_at: null }], error: null });
         throw new Error(`unexpected table ${table}`);
       });
-      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
 
@@ -203,7 +206,7 @@ describe("SupabaseUniverseRepository", () => {
           return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "ELIGIBLE", checked_at: "2026-09-15T00:00:00.000Z" }], error: null });
         throw new Error(`unexpected table ${table}`);
       });
-      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
       const eligible = await repo.getEligibleResearchUniverse("crypto-core");
       expect(eligible.map((i) => i.venueSymbol)).toEqual(["SOLUSDT"]);
     });
@@ -220,7 +223,7 @@ describe("SupabaseUniverseRepository", () => {
           return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "ELIGIBLE", checked_at: null }], error: null });
         throw new Error(`unexpected table ${table}`);
       });
-      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
 
@@ -236,7 +239,7 @@ describe("SupabaseUniverseRepository", () => {
           return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "ELIGIBLE", checked_at: "2026-09-15T00:00:00.000Z" }], error: null });
         throw new Error(`unexpected table ${table}`);
       });
-      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
 
@@ -253,7 +256,7 @@ describe("SupabaseUniverseRepository", () => {
           return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "ELIGIBLE", checked_at: "2026-09-15T00:00:00.000Z" }], error: null });
         throw new Error(`unexpected table ${table}`);
       });
-      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
 
@@ -269,7 +272,7 @@ describe("SupabaseUniverseRepository", () => {
           return makeQueryBuilder({ data: [{ instrument_id: "instr-uuid-1", status: "ELIGIBLE", checked_at: "2026-09-15T00:00:00.000Z" }], error: null });
         throw new Error(`unexpected table ${table}`);
       });
-      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient);
+      const repo = new SupabaseUniverseRepository({ from } as unknown as SupabaseClient<Database>);
       expect(await repo.getEligibleResearchUniverse("crypto-core")).toEqual([]);
     });
   });
@@ -292,7 +295,7 @@ describe("SupabaseUniverseRepository", () => {
       }
       throw new Error(`unexpected table ${table}`);
     });
-    const client = { from } as unknown as SupabaseClient;
+    const client = { from } as unknown as SupabaseClient<Database>;
 
     const repo = new SupabaseUniverseRepository(client);
     await repo.setMemberFlags("crypto-core", "CRYPTO:BYBIT:SOL/USDT", { researchEnabled: true });

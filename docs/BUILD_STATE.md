@@ -796,3 +796,121 @@ active 14-day PAPER research session and its AUTO policy, current PAPER
 equity, and every LIVE-disabled layer. The migration remains NOT applied
 to the live Supabase project; `main` was not touched; nothing was
 deployed; Strategy V2 was not started.
+
+## Checkpoint 2 — migration APPLIED to live Supabase (2026-09-15)
+
+Approved commit `03e008fcfb9be4f1e31807dc3ae4559660c81af9`. Applied
+`supabase/migrations/20260914130000_multi_market_universe.sql` to the
+`davinki-trading-bot` project (`xvklitfcesprzbnfslks`) via
+`mcp__Supabase__apply_migration`. This is the first Checkpoint-2 action
+that actually touched the live database.
+
+**Pre-apply guards, verified live before touching anything:**
+- Working branch `claude/practical-davinci-6sejvp`, `HEAD =
+  03e008fcfb9be4f1e31807dc3ae4559660c81af9` — matched exactly.
+- `system_settings`: `trading_mode = PAPER`, `live_trading_enabled = false`.
+- `strategy_versions.v1.status = DRAFT` (unchanged since Milestone 6).
+- `paper_research_sessions` (research session `82058733-...`): `status =
+  ACTIVE`, `started_at`/`ends_at`/`planned_days` unchanged from the
+  original 14-day window.
+- `instrument_metadata` had exactly 2 rows (BTC/ETH) — no prior
+  contamination.
+- None of `venues`/`instruments`/`universes`/`universe_members`/
+  `instrument_research_eligibility` existed yet; the migration was not in
+  `list_migrations`.
+
+**Applied successfully.** `mcp__Supabase__apply_migration` returned
+`{"success":true}`.
+
+**Tables created and verified via `list_tables`:** `venues` (1 row),
+`instruments` (5 rows), `universes` (1 row), `universe_members` (5 rows),
+`instrument_research_eligibility` (5 rows) — all with `rls_enabled: true`.
+
+**Seed state verified with direct queries, matching the migration exactly:**
+- Venue: `BYBIT`, `asset_classes = ["CRYPTO_SPOT"]`.
+- Universe: `crypto-core`, `purpose = HISTORICAL`, `asset_class =
+  CRYPTO_SPOT`, `venue_id = BYBIT`, `enabled = true`.
+- All five instruments (BTC/ETH/SOL/XRP/BNB against USDT) present as
+  `universe_members` of `crypto-core` with `research_enabled = true`,
+  `shadow_enabled = false`, `paper_enabled = false` — no exceptions.
+- All five `instrument_research_eligibility` rows: `status = UNKNOWN`,
+  `checked_at = NULL` — nothing was manually marked ELIGIBLE or given a
+  fabricated timestamp.
+
+**Safety constraints and all five cross-table triggers verified live**,
+each inside a `BEGIN ... ROLLBACK` (or left to auto-rollback on the
+expected error) so no test data or state change persisted:
+
+| Check | Result |
+|---|---|
+| `UPDATE ... SET status='ELIGIBLE'` with `checked_at` still NULL | **rejected** (`eligibility_checked_at_required_when_eligible`) |
+| Same UPDATE with `checked_at = now()` | **accepted**, then rolled back |
+| Insert a CRYPTO_SPOT instrument as a member of a FOREX-classed test universe | **rejected** (`validate_universe_member_compatibility`) |
+| Insert an instrument on a different venue as a member of a BYBIT-pinned test universe | **rejected** (`validate_universe_member_compatibility`) |
+| `UPDATE universes SET asset_class='FOREX'` on `crypto-core` (5 existing members) | **rejected** (`validate_universe_update_against_members`) |
+| `UPDATE instruments SET asset_class='FOREX'` on BTC/USDT (1 existing membership) | **rejected** (`validate_instrument_update_against_memberships`) |
+| `UPDATE venues SET asset_classes=['FOREX']` on BYBIT (5 existing instruments) | **rejected** (`validate_venue_update_against_instruments`) |
+
+After all of the above, a final count query confirmed exactly the
+original 1/5/1/5/5 rows across the five tables, `paper_enabled = true`
+count `0`, and every eligibility row still `UNKNOWN`/`NULL` — none of the
+verification queries left any residue.
+
+**RLS verified directly against `pg_policies`:**
+- `authenticated_read` (SELECT, role `authenticated`) exists on all five
+  tables — no `anon` policy anywhere on any of them.
+- `owner_manage_instruments`, `owner_manage_universes`,
+  `owner_manage_universe_members` each exist as a single `ALL`-command
+  policy scoped to the `authenticated` role, gated inside by the
+  `app_metadata->>'role' = 'owner'` check (same pattern as every other
+  owner-only table in this project).
+- `instrument_research_eligibility` has **only** the read policy — no
+  `ALL`/`INSERT`/`UPDATE` policy exists for it at all, confirmed by the
+  query returning exactly one row for that table.
+
+**PAPER safety verified:** `select count(*) from universe_members where
+paper_enabled = true` → `0`.
+
+**Security advisor findings** (`mcp__Supabase__get_advisors`, type
+`security`) after the apply:
+- **New** (from this migration): all 7 functions it created
+  (`set_updated_at`, `venue_asset_classes_are_valid`,
+  `validate_instrument_venue_asset_class`,
+  `validate_universe_member_compatibility`,
+  `validate_universe_update_against_members`,
+  `validate_instrument_update_against_memberships`,
+  `validate_venue_update_against_instruments`) have a mutable
+  `search_path` (`function_search_path_mutable`, WARN). Not fixed in this
+  checkpoint — it's outside the exact scope authorized ("apply exactly
+  `20260914130000_multi_market_universe.sql`... do not apply unrelated
+  pending migrations") — flagged as a small, additive follow-up
+  (`ALTER FUNCTION public.<name> SET search_path = ''` on each) for a
+  dedicated migration.
+- **Pre-existing, unrelated**: `authenticated_security_definer_function_executable`
+  on the `owner_*` RPCs (guest management, integration config — all
+  predate Checkpoint 2), and `auth_leaked_password_protection`. Neither
+  was introduced by this migration.
+
+**Types regenerated and repository re-typed:** `lib/supabase/database.types.ts`
+regenerated from the live schema via `mcp__Supabase__generate_typescript_types`
+(now includes `venues`/`instruments`/`universes`/`universe_members`/
+`instrument_research_eligibility`, confirmed `instrument_research_eligibility.checked_at:
+string | null` came through correctly). `SupabaseUniverseRepository`
+switched from an untyped `SupabaseClient` to `SupabaseClient<Database>`,
+using `Database["public"]["Tables"][...]["Row"/"Update"]` types instead of
+hand-written row shapes — no behavioral change, confirmed by the full test
+suite staying green with zero test-assertion edits needed beyond the
+client-type cast in the test file itself.
+
+**Final checks:** 557/557 tests passing (no count change — this was a
+typing-only change), `npm run typecheck` / `npm run lint` (2 pre-existing
+warnings, unchanged) / `npm run build` all clean.
+
+**Confirmed after the apply, queried directly:** `trading_mode = PAPER`,
+`live_trading_enabled = false`, `strategy_versions.v1.status = DRAFT`,
+research session `82058733-...` still `status = ACTIVE` with its original
+window, `paper_enabled = true` count still `0`. Nothing in
+`lib/strategy/v1/`, `app/api/jobs/scan/route.ts`, `lib/risk/`, or
+`lib/trading/` was touched. No runtime eligibility check was performed or
+faked — all five instruments remain `UNKNOWN`/`checked_at NULL`. Strategy
+V2 was not started. `main` was not touched; nothing was deployed.
