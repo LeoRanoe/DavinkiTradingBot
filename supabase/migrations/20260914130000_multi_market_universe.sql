@@ -407,6 +407,129 @@ create trigger eligibility_set_updated_at
   for each row execute function public.set_updated_at();
 
 -- ---------------------------------------------------------------------------
+-- Cross-table update validation (final cross-table invariant completion).
+--
+-- validate_instrument_venue_asset_class and
+-- validate_universe_member_compatibility (above) only fire on the row being
+-- written - they stop a NEW mismatched instrument or membership from being
+-- created. They do NOT stop the invariant being broken the other way:
+-- editing a PARENT row (a universe's asset_class/venue_id, an instrument's
+-- asset_class/venue_id, or a venue's asset_classes) after compatible child
+-- rows already exist. None of those UPDATEs touch universe_members itself,
+-- so its own trigger never fires for them. Example: a universe seeded as
+-- CRYPTO_SPOT/BYBIT with BTC/USDT as a member, then
+-- `UPDATE universes SET asset_class = 'FOREX'` - the membership row is
+-- untouched, yet the universe/member pairing is now nonsensical.
+--
+-- The three triggers below close that gap by validating the PARENT'S
+-- existing children before allowing the parent UPDATE, rather than ever
+-- cascading/remapping a child silently.
+-- ---------------------------------------------------------------------------
+
+-- 1) Universe asset_class/venue_id changing must not orphan its own members.
+create or replace function public.validate_universe_update_against_members()
+returns trigger language plpgsql as $$
+declare
+  bad_count integer;
+begin
+  if new.asset_class = old.asset_class and new.venue_id is not distinct from old.venue_id then
+    return new; -- nothing relevant to this rule changed
+  end if;
+
+  select count(*) into bad_count
+  from public.universe_members um
+  join public.instruments i on i.id = um.instrument_id
+  where um.universe_id = new.id
+    and (
+      i.asset_class <> new.asset_class
+      or (new.venue_id is not null and i.venue_id <> new.venue_id)
+    );
+
+  if bad_count > 0 then
+    raise exception
+      'Cannot update universe % (asset_class=%, venue_id=%): % existing member(s) would become incompatible',
+      new.key, new.asset_class, new.venue_id, bad_count;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists universes_validate_update_against_members on public.universes;
+create trigger universes_validate_update_against_members
+  before update of asset_class, venue_id on public.universes
+  for each row execute function public.validate_universe_update_against_members();
+
+-- 2) Instrument asset_class/venue_id changing must not break any
+-- universe_members row already pointing at it (in addition to the existing
+-- validate_instrument_venue_asset_class, which only re-checks the
+-- instrument against its OWN venue, not against memberships).
+create or replace function public.validate_instrument_update_against_memberships()
+returns trigger language plpgsql as $$
+declare
+  bad_count integer;
+begin
+  if new.asset_class = old.asset_class and new.venue_id is not distinct from old.venue_id then
+    return new;
+  end if;
+
+  select count(*) into bad_count
+  from public.universe_members um
+  join public.universes u on u.id = um.universe_id
+  where um.instrument_id = new.id
+    and (
+      new.asset_class <> u.asset_class
+      or (u.venue_id is not null and new.venue_id <> u.venue_id)
+    );
+
+  if bad_count > 0 then
+    raise exception
+      'Cannot update instrument % (asset_class=%, venue_id=%): % existing membership(s) would become incompatible',
+      new.canonical_id, new.asset_class, new.venue_id, bad_count;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists instruments_validate_update_against_memberships on public.instruments;
+create trigger instruments_validate_update_against_memberships
+  before update of asset_class, venue_id on public.instruments
+  for each row execute function public.validate_instrument_update_against_memberships();
+
+-- 3) Venue asset_classes shrinking must not strand any instrument already
+-- on that venue. Never silently deactivates the instrument - the UPDATE is
+-- simply refused.
+create or replace function public.validate_venue_update_against_instruments()
+returns trigger language plpgsql as $$
+declare
+  bad_count integer;
+begin
+  if new.asset_classes = old.asset_classes then
+    return new;
+  end if;
+
+  select count(*) into bad_count
+  from public.instruments i
+  where i.venue_id = new.id
+    and not (i.asset_class = any(new.asset_classes));
+
+  if bad_count > 0 then
+    raise exception
+      'Cannot update venue % asset_classes to %: % existing instrument(s) would no longer have a supported asset_class',
+      new.id, new.asset_classes, bad_count;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists venues_validate_update_against_instruments on public.venues;
+create trigger venues_validate_update_against_instruments
+  before update of asset_classes on public.venues
+  for each row execute function public.validate_venue_update_against_instruments();
+
+-- ---------------------------------------------------------------------------
 -- Seed data: the initial crypto research universe (§6/§13). research_enabled
 -- = true for every listed pair so it can be studied; paper_enabled = false
 -- for ALL of them, including BTC/ETH, because PAPER authorization for those

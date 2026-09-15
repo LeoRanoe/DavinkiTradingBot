@@ -158,4 +158,38 @@ describe("Checkpoint 2 migration: static safety properties", () => {
       expect(sql).toMatch(new RegExp(`create trigger ${trigger}\\s+before update on public\\.${table}`, "i"));
     }
   });
+
+  describe("cross-table invariant completion: parent-row UPDATEs are validated against existing children", () => {
+    it("universes.asset_class/venue_id UPDATE is validated against existing universe_members", () => {
+      expect(sql).toMatch(/validate_universe_update_against_members/);
+      expect(sql).toMatch(/create trigger universes_validate_update_against_members\s+before update of asset_class, venue_id on public\.universes/i);
+    });
+
+    it("instruments.asset_class/venue_id UPDATE is validated against existing universe_members referencing it", () => {
+      expect(sql).toMatch(/validate_instrument_update_against_memberships/);
+      expect(sql).toMatch(
+        /create trigger instruments_validate_update_against_memberships\s+before update of asset_class, venue_id on public\.instruments/i,
+      );
+    });
+
+    it("venues.asset_classes UPDATE is validated against existing instruments on that venue", () => {
+      expect(sql).toMatch(/validate_venue_update_against_instruments/);
+      expect(sql).toMatch(/create trigger venues_validate_update_against_instruments\s+before update of asset_classes on public\.venues/i);
+    });
+
+    it("none of the three parent-update triggers silently cascades/remaps a child row - each only RAISEs or returns NEW unchanged", () => {
+      for (const name of [
+        "validate_universe_update_against_members",
+        "validate_instrument_update_against_memberships",
+        "validate_venue_update_against_instruments",
+      ]) {
+        const fnMatch = sql.match(new RegExp(`create or replace function public\\.${name}\\([\\s\\S]*?\\$\\$;`));
+        expect(fnMatch).not.toBeNull();
+        const body = fnMatch![0];
+        expect(body).toMatch(/raise exception/i);
+        expect(body).not.toMatch(/update public\./i);
+        expect(body).not.toMatch(/delete from public\./i);
+      }
+    });
+  });
 });

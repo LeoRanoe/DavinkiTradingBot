@@ -702,3 +702,97 @@ equity, and every LIVE-disabled layer — none referenced by any edit in
 this patch. The migration remains NOT applied to the live Supabase
 project; main was not touched; nothing was deployed; Strategy V2 was not
 started.
+
+## Checkpoint 2 — cross-table invariant completion (2026-09-15, not yet applied)
+
+Requested after review of commit `de798cbba7fc0772bc709e3fbfba5d2b7a71c984`.
+The prior guardrails (`validate_instrument_venue_asset_class`,
+`validate_universe_member_compatibility`) only fire on the row actually
+being written, so they stop a new mismatched instrument or membership from
+being *created* — but they never fire when a PARENT row is edited after
+compatible children already exist: `UPDATE universes SET asset_class =
+'FOREX'` on a universe with existing CRYPTO_SPOT members touches no
+`universe_members` row at all, so its trigger stays silent while the
+pairing becomes nonsensical. Same class of gap existed for an instrument's
+`asset_class`/`venue_id` changing after it already has memberships, and for
+a venue's `asset_classes` shrinking after instruments already reference it.
+
+**Three new triggers**, added in a dedicated "Cross-table update
+validation" section of the migration (after all four tables and their
+existing triggers, before the seed data):
+
+- `universes_validate_update_against_members` — `BEFORE UPDATE OF
+  asset_class, venue_id ON universes`. Counts existing `universe_members`
+  (joined to `instruments`) that would become incompatible with the new
+  values; raises and refuses the UPDATE if that count is > 0. A no-op
+  UPDATE (values unchanged, or an unrelated column like `name`) is a fast
+  pass-through.
+- `instruments_validate_update_against_memberships` — `BEFORE UPDATE OF
+  asset_class, venue_id ON instruments`. Same shape, the other direction:
+  counts `universe_members` (joined to `universes`) referencing this
+  instrument that would become incompatible. Kept separate from the
+  existing `validate_instrument_venue_asset_class` trigger (which only
+  re-checks the instrument against its own venue's `asset_classes`, not
+  against any membership) rather than merging the two, so each function
+  stays a single, auditable responsibility.
+- `venues_validate_update_against_instruments` — `BEFORE UPDATE OF
+  asset_classes ON venues`. Counts instruments on that venue whose
+  `asset_class` would no longer be in the new `asset_classes` array;
+  refuses the UPDATE. Never deactivates or reassigns the instrument itself
+  — the venue's own definition just can't shrink out from under it.
+
+All three follow the same "no silent cascade/remapping" rule the request
+specified: each is a pure validation gate that either lets the UPDATE
+through unchanged or raises an exception. None of them writes to any other
+table.
+
+**Domain defense in depth**: `selectEligibleResearchInstruments`
+(`lib/domain/universe.ts`) now also requires
+`member.instrument.assetClass === universe.assetClass` and
+(`universe.venueId === null OR member.instrument.venue ===
+universe.venueId`), on top of the existing research-selected / active /
+ELIGIBLE / checked-at-populated checks. This holds independent of whatever
+the database does or doesn't enforce — an in-memory fixture with
+deliberately malformed data, or a future bug in one of the three triggers
+above, still can't put a mismatched instrument in front of a research
+trial.
+
+**Validation** — re-ran the full DDL/seed against a fresh scratch local
+PostgreSQL 16 database and exercised every one of the eleven required
+scenarios directly (not just asserted in prose):
+
+| # | Scenario | Result |
+|---|---|---|
+| 1 | Valid membership insert | accepted |
+| 2 | Member insert, wrong asset class | rejected (existing trigger) |
+| 3 | Member insert, wrong venue | rejected (existing trigger) |
+| 4 | `UPDATE universes SET asset_class` that would orphan members | rejected |
+| 5 | `UPDATE universes SET venue_id` that would orphan members | rejected |
+| 6 | `UPDATE universes SET name` (unrelated) | accepted |
+| 7 | `UPDATE instruments SET asset_class` that would break memberships | rejected |
+| 8 | `UPDATE instruments SET venue_id` that would break memberships | rejected |
+| 9 | `UPDATE instruments SET metadata` (unrelated) | accepted |
+| 10 | `UPDATE venues SET asset_classes` shrinking, stranding an instrument | rejected |
+| 11 | `UPDATE venues SET asset_classes` widening | accepted |
+
+Also re-ran the complete DDL a second time end-to-end to confirm the whole
+migration, including the three new triggers, is still idempotent (every
+statement either `CREATE ... IF NOT EXISTS`/`DROP TRIGGER IF EXISTS` or an
+`INSERT ... ON CONFLICT DO NOTHING`, all producing `INSERT 0` on the
+re-run). Dropped the scratch database afterward — no `mcp__Supabase__*`
+tool call, no production database mutation.
+
+**Tests:** 557/557 passing (7 net-new over the 550 from the prior commit):
+three domain-level tests for the new asset-class/venue defense-in-depth
+checks (mismatch excluded, venue mismatch excluded, null `venueId` allows
+any venue), and static migration-safety assertions confirming each new
+trigger exists, is scoped to the right columns/table, and only ever
+raises or passes through (never writes to another table). `npm run
+typecheck` / `npm run lint` (2 pre-existing warnings, unchanged) / `npm
+run build` all clean.
+
+**Confirmed unchanged:** Strategy V1, the scanner, the risk engine, the
+active 14-day PAPER research session and its AUTO policy, current PAPER
+equity, and every LIVE-disabled layer. The migration remains NOT applied
+to the live Supabase project; `main` was not touched; nothing was
+deployed; Strategy V2 was not started.

@@ -232,5 +232,41 @@ describe("InMemoryUniverseRepository", () => {
       });
       expect(selectEligibleResearchInstruments(universe, [corruptMember])).toEqual([]);
     });
+
+    describe("asset-class/venue defense in depth (cross-table invariant completion §5)", () => {
+      it("excludes a member whose instrument.assetClass doesn't match universe.assetClass, even if flagged ELIGIBLE", () => {
+        const universe = cryptoCoreDef(); // CRYPTO_SPOT
+        const [eurusd] = FAKE_FOREX_INSTRUMENTS; // FOREX - a mismatched pairing that should be structurally impossible
+        const mismatched = member(eurusd, {
+          researchEnabled: true,
+          eligibilityStatus: "ELIGIBLE",
+          eligibilityCheckedAt: Date.now(),
+        });
+        expect(selectEligibleResearchInstruments(universe, [mismatched])).toEqual([]);
+      });
+
+      it("excludes a member whose instrument.venue doesn't match a universe-pinned venueId, even if flagged ELIGIBLE", () => {
+        const universe = cryptoCoreDef({ venueId: "BYBIT" });
+        const wrongVenueInstrument: Instrument = { ...CRYPTO_SPOT_INSTRUMENTS[0], venue: "KRAKEN" };
+        const mismatched = member(wrongVenueInstrument, {
+          researchEnabled: true,
+          eligibilityStatus: "ELIGIBLE",
+          eligibilityCheckedAt: Date.now(),
+        });
+        expect(selectEligibleResearchInstruments(universe, [mismatched])).toEqual([]);
+      });
+
+      it("allows any venue when universe.venueId is null (venue-agnostic universe)", () => {
+        const universe = cryptoCoreDef({ venueId: null });
+        const krakenInstrument: Instrument = { ...CRYPTO_SPOT_INSTRUMENTS[0], venue: "KRAKEN" };
+        const eligible = member(krakenInstrument, {
+          researchEnabled: true,
+          eligibilityStatus: "ELIGIBLE",
+          eligibilityCheckedAt: Date.now(),
+        });
+        const result = selectEligibleResearchInstruments(universe, [eligible]);
+        expect(result.map((i) => i.venue)).toEqual(["KRAKEN"]);
+      });
+    });
   });
 });

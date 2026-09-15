@@ -115,8 +115,21 @@ export interface UniverseRepository {
 /**
  * Pure, repository-independent filter implementing the fail-closed rule
  * above. Both InMemoryUniverseRepository and SupabaseUniverseRepository
- * call this rather than each re-implementing the same four-way AND, so the
+ * call this rather than each re-implementing the same multi-way AND, so the
  * rule can't drift between implementations.
+ *
+ * Cross-table invariant completion §5: the proposed migration's triggers
+ * (validate_universe_member_compatibility on write,
+ * validate_universe_update_against_members /
+ * validate_instrument_update_against_memberships /
+ * validate_venue_update_against_instruments on parent UPDATE) are meant to
+ * make an asset-class/venue mismatch between a universe and its member
+ * impossible to persist at all. This filter does not trust that anyway:
+ * fixture data, an in-memory repository with no DB behind it at all, or a
+ * future bug in one of those triggers should never be able to smuggle a
+ * mismatched instrument into a research trial. So the same asset-class and
+ * venue checks are re-asserted here, in plain TypeScript, independent of
+ * whatever the database does or doesn't enforce.
  */
 export function selectEligibleResearchInstruments(
   universe: UniverseDefinition | null,
@@ -128,6 +141,12 @@ export function selectEligibleResearchInstruments(
       (m) =>
         m.researchEnabled &&
         m.instrument.isActive &&
+        // Defense in depth against a malformed/mismatched pairing that
+        // should be structurally impossible per the migration's triggers,
+        // but this filter fails closed regardless of whether those
+        // triggers exist, fired, or are even backed by a real database.
+        m.instrument.assetClass === universe.assetClass &&
+        (universe.venueId === null || m.instrument.venue === universe.venueId) &&
         m.eligibilityStatus === "ELIGIBLE" &&
         // Final pre-apply guardrail patch §1: an ELIGIBLE row with no
         // checked_at is a data bug (the DB CHECK

@@ -338,3 +338,38 @@ applied to Supabase.
   `updated_at` trigger actually bumps the timestamp on UPDATE, and the
   full migration is still idempotent on re-run. Dropped afterward — no
   Supabase MCP call, no production mutation.
+
+## Checkpoint 2 — cross-table invariant completion (not yet applied)
+
+Requested after review of commit `de798cbba7fc0772bc709e3fbfba5d2b7a71c984`.
+The prior compatibility triggers only fired on the child row
+(`universe_members`) being written; they never stopped a PARENT
+(`universes`/`instruments`/`venues`) from being edited out from under
+already-compatible children. Full detail in `docs/BUILD_STATE.md`.
+
+- [x] `universes_validate_update_against_members`: rejects a
+  `UPDATE ... SET asset_class = ...` or `venue_id = ...` on a universe if
+  any existing member would become incompatible.
+- [x] `instruments_validate_update_against_memberships`: rejects the same
+  UPDATE shape on an instrument if any existing `universe_members` row
+  referencing it would become incompatible.
+- [x] `venues_validate_update_against_instruments`: rejects shrinking
+  `venues.asset_classes` if any existing instrument on that venue would
+  lose its supported asset class. Never silently deactivates anything —
+  the UPDATE is refused, full stop.
+- [x] `selectEligibleResearchInstruments` now also requires
+  `member.instrument.assetClass === universe.assetClass` and
+  (`universe.venueId === null OR member.instrument.venue ===
+  universe.venueId`) — defense in depth independent of whether the DB
+  triggers exist, fired, or are backed by a real database at all.
+- [x] 7 net-new tests (557 total, up from 550); typecheck/lint/build
+  clean. Re-validated against a fresh scratch local PostgreSQL 16
+  database: every one of the 11 requested scenarios exercised directly
+  (valid membership; wrong-asset-class and wrong-venue member inserts
+  rejected; universe asset_class/venue_id updates that would orphan
+  members rejected, a no-op-relevant update accepted; instrument
+  asset_class/venue_id updates that would break memberships rejected, an
+  unrelated update accepted; venue asset_classes shrink that would strand
+  an instrument rejected, a widen accepted) — plus a second full apply
+  confirming the migration is still idempotent. Dropped the scratch
+  database afterward — no Supabase MCP call, no production mutation.
