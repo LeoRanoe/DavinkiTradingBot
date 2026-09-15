@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CanonicalCandle } from "@/lib/domain/market-data-provider";
-import { validateCandleIntegrity } from "../candle-integrity";
+import { validateCandleBatchIdentity, validateCandleIntegrity } from "../candle-integrity";
 
 function candle(overrides: Partial<CanonicalCandle> = {}): CanonicalCandle {
   return {
@@ -77,5 +77,39 @@ describe("validateCandleIntegrity (§11)", () => {
 
   it("an empty array is valid (nothing to validate)", () => {
     expect(validateCandleIntegrity([])).toEqual({ valid: true, issues: [] });
+  });
+});
+
+describe("validateCandleBatchIdentity (§4) — a trial must not mix instruments/timeframes or run a mismatched timeframe", () => {
+  it("valid single-instrument, single-timeframe batch matching the expected timeframe passes", () => {
+    const candles = [candle({ openTime: 0 }), candle({ openTime: 3_600_000 })];
+    expect(validateCandleBatchIdentity(candles, "1H")).toEqual({ valid: true, issue: null });
+  });
+
+  it("zero candles is its own explicit, typed outcome - not conflated with mixed/mismatched", () => {
+    const report = validateCandleBatchIdentity([], "1H");
+    expect(report.valid).toBe(false);
+    expect(report.issue?.reason).toBe("ZERO_CANDLES");
+  });
+
+  it("flags a batch mixing more than one instrument", () => {
+    const candles = [candle({ instrumentId: "A" }), candle({ instrumentId: "B", openTime: 3_600_000 })];
+    const report = validateCandleBatchIdentity(candles, "1H");
+    expect(report.valid).toBe(false);
+    expect(report.issue?.reason).toBe("MIXED_INSTRUMENTS");
+  });
+
+  it("flags a batch mixing more than one timeframe", () => {
+    const candles = [candle({ timeframe: "1H" }), candle({ timeframe: "4H", openTime: 3_600_000 })];
+    const report = validateCandleBatchIdentity(candles, "1H");
+    expect(report.valid).toBe(false);
+    expect(report.issue?.reason).toBe("MIXED_TIMEFRAMES");
+  });
+
+  it("flags a uniform-timeframe batch that doesn't match the expected (parameter set) timeframe - e.g. a 4H config fed 1H candles", () => {
+    const candles = [candle({ timeframe: "1H" }), candle({ timeframe: "1H", openTime: 3_600_000 })];
+    const report = validateCandleBatchIdentity(candles, "4H");
+    expect(report.valid).toBe(false);
+    expect(report.issue?.reason).toBe("TIMEFRAME_MISMATCH_WITH_PARAM_SET");
   });
 });

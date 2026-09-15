@@ -1,4 +1,5 @@
 import type { CanonicalCandle } from "@/lib/domain/market-data-provider";
+import type { CanonicalTimeframe } from "@/lib/domain/timeframe";
 
 /**
  * Candle data-integrity validation (Checkpoint 3A §11). Run before any
@@ -79,4 +80,62 @@ export function validateCandleIntegrity(candles: readonly CanonicalCandle[]): Ca
   }
 
   return { valid: issues.length === 0, issues };
+}
+
+/**
+ * Candle-batch identity validation (Checkpoint 3A.1 §4). Separate from
+ * `validateCandleIntegrity` (which checks each candle's own OHLCV
+ * shape) — this checks that the BATCH, as a whole, is a legal input to a
+ * single trial: one instrument, one timeframe, and that timeframe must
+ * match the parameter set the caller intends to run against it (e.g. a
+ * TRB-4H config must never silently run on 1H candles). Zero candles is
+ * its own explicit, typed outcome — never conflated with "mixed" or
+ * "mismatched" since neither claim is meaningful for an empty batch.
+ */
+export type CandleBatchIdentityIssueReason =
+  | "ZERO_CANDLES"
+  | "MIXED_INSTRUMENTS"
+  | "MIXED_TIMEFRAMES"
+  | "TIMEFRAME_MISMATCH_WITH_PARAM_SET";
+
+export type CandleBatchIdentityIssue = {
+  reason: CandleBatchIdentityIssueReason;
+  details?: string;
+};
+
+export type CandleBatchIdentityReport = {
+  valid: boolean;
+  issue: CandleBatchIdentityIssue | null;
+};
+
+export function validateCandleBatchIdentity(
+  candles: readonly CanonicalCandle[],
+  expectedTimeframe: CanonicalTimeframe,
+): CandleBatchIdentityReport {
+  if (candles.length === 0) {
+    return { valid: false, issue: { reason: "ZERO_CANDLES" } };
+  }
+
+  const instrumentIds = new Set(candles.map((c) => c.instrumentId));
+  if (instrumentIds.size > 1) {
+    return { valid: false, issue: { reason: "MIXED_INSTRUMENTS", details: [...instrumentIds].join(", ") } };
+  }
+
+  const timeframes = new Set(candles.map((c) => c.timeframe));
+  if (timeframes.size > 1) {
+    return { valid: false, issue: { reason: "MIXED_TIMEFRAMES", details: [...timeframes].join(", ") } };
+  }
+
+  const actualTimeframe = candles[0].timeframe;
+  if (actualTimeframe !== expectedTimeframe) {
+    return {
+      valid: false,
+      issue: {
+        reason: "TIMEFRAME_MISMATCH_WITH_PARAM_SET",
+        details: `candle batch timeframe=${actualTimeframe}, parameter set expects timeframe=${expectedTimeframe}`,
+      },
+    };
+  }
+
+  return { valid: true, issue: null };
 }

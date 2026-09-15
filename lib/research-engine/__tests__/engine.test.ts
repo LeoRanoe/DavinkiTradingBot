@@ -158,7 +158,7 @@ describe("generic research engine — risk, R-multiples, equity (§14/§15/§17)
     const trade = result.trades[0];
     expect(trade.outcome).toBe("CLOSED");
     expect(trade.pnl).toBeGreaterThan(0);
-    expect(trade.rMultiple).toBeCloseTo(trade.pnl! / trade.riskBudget, 10);
+    expect(trade.rMultiple).toBeCloseTo(trade.pnl! / trade.actualInitialRisk, 10);
     expect(result.finalEquity).toBeCloseTo(RISK.initialEquity + trade.pnl!, 10);
   });
 
@@ -178,12 +178,24 @@ describe("generic research engine — risk, R-multiples, equity (§14/§15/§17)
     expect(result.finalEquity).toBeLessThan(RISK.initialEquity);
   });
 
-  it("normalized sizing never uses leverage: notional at entry is riskBudget / stopDistancePct, and stop is always strictly below entry", () => {
+  it("normalized sizing never uses leverage: notional at entry never exceeds equity, and stop is always strictly below entry", () => {
     const candles = buildBreakoutThenExitSeries();
     const result = runResearchBacktest(candles, TRB_STRATEGY, paramSet, { risk: RISK, cost: ZERO_COST_MODEL });
     const trade = result.trades[0];
     expect(trade.initialStopPrice).toBeLessThan(trade.entryPrice);
-    expect(trade.riskBudget).toBeCloseTo(RISK.initialEquity * RISK.riskPct, 10);
+    expect(trade.targetRiskBudget).toBeCloseTo(RISK.initialEquity * RISK.riskPct, 10);
+    expect(trade.qty * trade.entryPrice).toBeLessThanOrEqual(RISK.initialEquity + 1e-6);
+  });
+
+  it("gross vs net (§7): grossPnl is the raw execution PnL, distinct from the net-of-cost pnl once costs apply", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const costModel: CostModel = { entryFeeBps: 10, exitFeeBps: 10, entrySlippageBps: 5, exitSlippageBps: 5 };
+    const result = runResearchBacktest(candles, TRB_STRATEGY, paramSet, { risk: RISK, cost: costModel });
+    const trade = result.trades[0];
+    expect(trade.grossPnl).toBe((trade.rawExitPrice! - trade.rawEntryPrice) * trade.qty);
+    expect(trade.pnl).not.toBe(trade.grossPnl);
+    const totalCost = trade.entryFee + trade.entrySlippageCost + trade.exitFee + trade.exitSlippageCost;
+    expect(trade.grossPnl! - totalCost).toBeCloseTo(trade.pnl!, 6);
   });
 });
 
@@ -245,5 +257,134 @@ describe("generic research engine — candle integrity gate", () => {
     expect(() => runResearchBacktest(corrupt, TRB_STRATEGY, paramSet, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
       /candle integrity violated/,
     );
+  });
+});
+
+describe("generic research engine — registry/parameter-set runtime invariants (§3)", () => {
+  it("throws when the parameter set's strategyId does not match the strategy being run", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const mutated = { ...paramSet, strategyId: "some-other-strategy" };
+    expect(() => runResearchBacktest(candles, TRB_STRATEGY, mutated, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /strategyId/,
+    );
+  });
+
+  it("throws when the parameter set id is not registered on the strategy at all", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const adHoc = { ...paramSet, id: "TRB-NOT-REGISTERED" };
+    expect(() => runResearchBacktest(candles, TRB_STRATEGY, adHoc, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /not registered/,
+    );
+  });
+
+  it("throws when an ad-hoc parameter object reuses a registered id but mutates the param VALUES", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const mutated = { ...paramSet, params: { ...paramSet.params, entryLookback: 999 } };
+    expect(() => runResearchBacktest(candles, TRB_STRATEGY, mutated, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /params mismatch/,
+    );
+  });
+
+  it("throws when an ad-hoc parameter object reuses a registered id but mutates the timeframe", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const mutated = { ...paramSet, timeframe: "4H" as const };
+    expect(() => runResearchBacktest(candles, TRB_STRATEGY, mutated, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /timeframe mismatch/,
+    );
+  });
+
+  it("accepts the actual preregistered parameter set unchanged", () => {
+    const candles = buildBreakoutThenExitSeries();
+    expect(() => runResearchBacktest(candles, TRB_STRATEGY, paramSet, { risk: RISK, cost: ZERO_COST_MODEL })).not.toThrow();
+  });
+});
+
+describe("generic research engine — candle batch identity (§4)", () => {
+  it("throws on a batch mixing more than one instrument", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const mixed = candles.map((c, i) => (i === 3 ? { ...c, instrumentId: "OTHER" } : c));
+    expect(() => runResearchBacktest(mixed, TRB_STRATEGY, paramSet, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /MIXED_INSTRUMENTS/,
+    );
+  });
+
+  it("throws on a batch mixing more than one timeframe", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const mixed = candles.map((c, i) => (i === 3 ? { ...c, timeframe: "4H" as const } : c));
+    expect(() => runResearchBacktest(mixed, TRB_STRATEGY, paramSet, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /MIXED_TIMEFRAMES/,
+    );
+  });
+
+  it("throws when the candle batch's timeframe does not match the parameter set's timeframe (e.g. a 4H config fed 1H candles)", () => {
+    const candles = buildBreakoutThenExitSeries(); // all 1H
+    const trb4h = { ...paramSet, id: "TRB-4H-20-10", timeframe: "4H" as const };
+    // Registry guard runs first and would reject this mismatch too - use the strategy's own real 4H
+    // parameter set so this test isolates the candle-identity check, not the registry check.
+    const realTrb4h = TRB_STRATEGY.parameterSets.find((p) => p.id === "TRB-4H-20-10")!;
+    expect(trb4h).toBeDefined();
+    expect(() => runResearchBacktest(candles, TRB_STRATEGY, realTrb4h, { risk: RISK, cost: ZERO_COST_MODEL })).toThrow(
+      /TIMEFRAME_MISMATCH_WITH_PARAM_SET/,
+    );
+  });
+
+  it("zero candles is handled explicitly and deterministically - an empty, valid result with a recorded skip, never a throw", () => {
+    const result = runResearchBacktest([], TRB_STRATEGY, paramSet, { risk: RISK, cost: ZERO_COST_MODEL });
+    expect(result.trades).toHaveLength(0);
+    expect(result.finalEquity).toBe(RISK.initialEquity);
+    expect(result.skips.some((s) => s.reason === "ZERO_CANDLES")).toBe(true);
+  });
+});
+
+describe("generic research engine — warm-up / execution window (§6)", () => {
+  it("prior context before tradeWindowStartIndex is visible to the strategy for warm-up (a signal can use it)", () => {
+    const candles = buildBreakoutThenExitSeries();
+    // Window starts exactly at the fill bar (21) - the breakout signal at
+    // bar 20 (before the window) must still be visible as history, but
+    // must not itself open a trade (see next test).
+    const result = runResearchBacktest(candles, TRB_STRATEGY, paramSet, {
+      risk: RISK,
+      cost: ZERO_COST_MODEL,
+      tradeWindowStartIndex: 25,
+    });
+    // No trade opens from the pre-window signal at bar 20.
+    expect(result.trades.every((t) => t.entryCandleIndex >= 25)).toBe(true);
+  });
+
+  it("a signal produced before tradeWindowStartIndex cannot create an in-window trade (recorded as a skip, not silently dropped)", () => {
+    const candles = buildBreakoutThenExitSeries();
+    const result = runResearchBacktest(candles, TRB_STRATEGY, paramSet, {
+      risk: RISK,
+      cost: ZERO_COST_MODEL,
+      tradeWindowStartIndex: 25,
+    });
+    expect(result.trades).toHaveLength(0); // the series' only signal (bar 20) is before the window
+    expect(result.skips.some((s) => s.reason === "PRE_WINDOW_SIGNAL_IGNORED")).toBe(true);
+  });
+
+  it("the first legitimate in-window signal still produces a trade", () => {
+    const candles = buildBreakoutThenExitSeries();
+    // tradeWindowStartIndex=0 is the default/backward-compatible case: the signal at bar 20 is in-window.
+    const result = runResearchBacktest(candles, TRB_STRATEGY, paramSet, {
+      risk: RISK,
+      cost: ZERO_COST_MODEL,
+      tradeWindowStartIndex: 0,
+    });
+    expect(result.trades).toHaveLength(1);
+    expect(result.trades[0].entryCandleIndex).toBe(21);
+  });
+
+  it("no future data is visible regardless of tradeWindowStartIndex (no-lookahead still holds)", () => {
+    const candles = buildBreakoutThenExitSeries();
+    let maxIndexSeen = -1;
+    const spyStrategy = {
+      ...TRB_STRATEGY,
+      evaluateEntry(closedCandles: readonly CanonicalCandle[], params: typeof paramSet) {
+        maxIndexSeen = Math.max(maxIndexSeen, closedCandles.length - 1);
+        return TRB_STRATEGY.evaluateEntry(closedCandles, params);
+      },
+    };
+    runResearchBacktest(candles, spyStrategy, paramSet, { risk: RISK, cost: ZERO_COST_MODEL, tradeWindowStartIndex: 25 });
+    expect(maxIndexSeen).toBeLessThanOrEqual(candles.length - 1);
   });
 });

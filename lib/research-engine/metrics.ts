@@ -1,14 +1,35 @@
 import type { EquityCurvePoint, ResearchTradeRecord } from "./engine";
 
 /**
- * Research metrics (Checkpoint 3A §17). Computed ONLY from CLOSED trades —
- * an OPEN_AT_END position is unrealized and must never be counted as a
- * win, a loss, or contribute to any R statistic (it has no pnl/rMultiple
- * to count). `openPositionsAtEnd` reports how many there were, separately.
+ * Research metrics (Checkpoint 3A §17, hardened Checkpoint 3A.1 §7/§8).
+ * Computed ONLY from CLOSED trades — an OPEN_AT_END position is
+ * unrealized and must never be counted as a win, a loss, or contribute
+ * to any R statistic (it has no pnl/rMultiple to count).
+ * `openPositionsAtEnd` reports how many there were; `openPositionEntryCosts`
+ * reports the entry-side cost they already paid, kept OUT of every
+ * return/cost figure below (§8, Convention A — see the field's own doc).
  *
  * Win rate is deliberately not the primary ranking signal anywhere this
  * type is consumed (CLAUDE.md / Checkpoint 3A §17) - it's reported because
  * it's informative, not because it should drive comparisons.
+ *
+ * §7 gross vs net: `grossReturn` is computed from `rawGrossPnl` per trade
+ * (raw execution prices, NO modeled costs) — never from `pnl`, which
+ * already has fees/slippage baked in and would silently mislabel a net
+ * figure as gross. `totalCosts` is CLOSED-trades-only, so
+ * `grossReturn - totalCosts` reconciles to `netReturn` within float
+ * tolerance (see the reconciliation test in __tests__/metrics.test.ts).
+ *
+ * §8 OPEN_AT_END accounting — Convention A (chosen, documented, the only
+ * one this module implements): a position still open at the end of a run
+ * is excluded ENTIRELY from `grossReturn`/`netReturn`/`totalCosts` — it
+ * is unrealized, so it has no gross/net PnL to report. Its entry-side
+ * cost (which WAS actually paid) is reported separately, once, as
+ * `openPositionEntryCosts` — never silently folded into `totalCosts`
+ * (which would break the gross/net/cost reconciliation above) and never
+ * silently dropped (which would understate what was actually spent).
+ * There is no synthetic final exit / mark-to-market anywhere in this
+ * module.
  */
 export type ResearchMetrics = {
   tradeCount: number; // CLOSED trades only
@@ -24,8 +45,10 @@ export type ResearchMetrics = {
 
   profitFactor: number | null;
 
-  grossReturn: number; // sum of pnl before costs are separated out (pnl already includes costs - see totalCosts for the cost component alone)
-  netReturn: number; // finalEquity - initialEquity
+  /** Sum of CLOSED trades' rawGrossPnl (raw execution prices, no modeled costs). */
+  grossReturn: number;
+  /** finalEquity - initialEquity == sum of CLOSED trades' net pnl (equity only ever moves on a CLOSED trade). */
+  netReturn: number;
 
   maxDrawdownPct: number; // on the realized equity curve
   maxDrawdownR: number | null; // on the cumulative-R curve, in chronological trade order
@@ -37,7 +60,10 @@ export type ResearchMetrics = {
   averageHoldingBars: number | null;
   medianHoldingBars: number | null;
 
-  totalCosts: number; // sum of all fee + slippage cost across every trade (closed and open-at-end's entry side)
+  /** Sum of fee + slippage cost across CLOSED trades only (§8 Convention A) - reconciles with grossReturn/netReturn. */
+  totalCosts: number;
+  /** Entry-side fee + slippage already paid by any still-OPEN_AT_END position, reported separately, never inside totalCosts/grossReturn/netReturn. */
+  openPositionEntryCosts: number;
 };
 
 function median(values: readonly number[]): number | null {
@@ -71,7 +97,7 @@ export function computeResearchMetrics(
   equityCurve: readonly EquityCurvePoint[],
 ): ResearchMetrics {
   const closed = trades.filter((t) => t.outcome === "CLOSED");
-  const openAtEnd = trades.length - closed.length;
+  const openAtEnd = trades.filter((t) => t.outcome === "OPEN_AT_END");
 
   const rValues = closed.map((t) => t.rMultiple!);
   const wins = closed.filter((t) => t.pnl! > 0);
@@ -87,12 +113,17 @@ export function computeResearchMetrics(
 
   const finalEquity = equityCurve.length > 0 ? equityCurve[equityCurve.length - 1].equity : initialEquity;
   const netReturn = finalEquity - initialEquity;
-  const grossReturn = closed.reduce((sum, t) => sum + t.pnl!, 0);
+  // §7: gross is the RAW execution PnL, before any modeled cost - never
+  // `pnl` (which is already net of fees/slippage).
+  const grossReturn = closed.reduce((sum, t) => sum + t.grossPnl!, 0);
 
-  const totalCosts = trades.reduce(
+  // §8 Convention A: only CLOSED trades' costs count toward totalCosts,
+  // so it reconciles with grossReturn/netReturn (both closed-only too).
+  const totalCosts = closed.reduce(
     (sum, t) => sum + t.entryFee + t.entrySlippageCost + t.exitFee + t.exitSlippageCost,
     0,
   );
+  const openPositionEntryCosts = openAtEnd.reduce((sum, t) => sum + t.entryFee + t.entrySlippageCost, 0);
 
   // Max losing streak: longest consecutive run of CLOSED trades (in
   // chronological/array order — engine always pushes trades in the order
@@ -120,7 +151,7 @@ export function computeResearchMetrics(
 
   return {
     tradeCount: closed.length,
-    openPositionsAtEnd: openAtEnd,
+    openPositionsAtEnd: openAtEnd.length,
     wins: wins.length,
     losses: losses.length,
     winRate: closed.length > 0 ? wins.length / closed.length : null,
@@ -146,6 +177,7 @@ export function computeResearchMetrics(
     medianHoldingBars: median(holdingBars),
 
     totalCosts,
+    openPositionEntryCosts,
   };
 }
 
