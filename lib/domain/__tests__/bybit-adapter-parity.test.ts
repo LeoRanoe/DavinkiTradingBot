@@ -60,8 +60,10 @@ describe("BybitMarketDataProvider parity with lib/bybit/client.ts", () => {
   });
 
   it("rejects an unsupported canonical timeframe rather than silently mis-mapping it", async () => {
+    // "4H" was added in Checkpoint 3A (see bybit-4h-support.test.ts) - use
+    // a timeframe that's still genuinely unsupported for this check.
     const provider = new BybitMarketDataProvider();
-    await expect(provider.getCandles(btc, "4H")).rejects.toThrow(/does not support canonical timeframe/);
+    await expect(provider.getCandles(btc, "1D")).rejects.toThrow(/does not support canonical timeframe/);
   });
 
   it("getTicker maps every field through unchanged", async () => {

@@ -3,7 +3,7 @@ import {
   bybitKlineResponseSchema,
   bybitTickersResponseSchema,
 } from "./schemas";
-import { BYBIT_INTERVAL, type Candle, type InstrumentMetadata, type Ticker } from "./types";
+import { BYBIT_INTERVAL, BYBIT_INTERVAL_MS, type Candle, type InstrumentMetadata, type Ticker } from "./types";
 
 /**
  * Bybit V5 public market-data client (spot category).
@@ -80,7 +80,7 @@ async function bybitFetch(path: string, params: Record<string, string>): Promise
  */
 export async function getCandles(
   symbol: string,
-  timeframe: "1H" | "15M",
+  timeframe: "1H" | "15M" | "4H",
   limit = 200,
   endMs?: number,
 ): Promise<Candle[]> {
@@ -103,7 +103,7 @@ export async function getCandles(
 
   const rows = [...parsed.data.result.list].reverse(); // oldest first
   const nowMs = Date.now();
-  const intervalMs = timeframe === "1H" ? 3_600_000 : 900_000;
+  const intervalMs = BYBIT_INTERVAL_MS[timeframe];
 
   return rows.map(([startTime, open, high, low, close, volume]) => {
     const openTime = Number(startTime);

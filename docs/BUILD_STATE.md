@@ -1019,3 +1019,220 @@ research instruments still `status = UNKNOWN`, `checked_at = NULL`. No
 runtime venue eligibility check was run. `lib/strategy/v1/`,
 `app/api/jobs/scan/route.ts`, `lib/risk/`, `lib/trading/` untouched.
 Strategy V2 not started; `main` not touched; nothing deployed.
+
+## Checkpoint 3A — V2 Trading Range Breakout + generic research engine (2026-09-15)
+
+Pure code, no DB migration, no live database write. First strategy-research
+checkpoint: builds and tests the generic research machinery and V2 TRB.
+Does not promote V2, does not PAPER/shadow it, does not deploy a new
+scanner, does not touch the active V1 experiment.
+
+**1. Files added/changed:**
+- New namespace: `lib/research-engine/` — `strategy.ts`, `engine.ts`,
+  `metrics.ts`, `cost-model.ts`, `position-sizing.ts`, `split.ts`,
+  `trial.ts`, `benchmark.ts`, `candle-integrity.ts`,
+  `historical-loader.ts`, `eligible-universe-gate.ts`,
+  `strategies/trb.ts`, plus 11 test files under `__tests__/`.
+- Additive-only edits: `lib/bybit/types.ts` (4H interval/ms maps),
+  `lib/bybit/client.ts` (`getCandles`'s timeframe param widened to
+  include `"4H"`, interval-ms lookup generalized from a ternary to a map —
+  identical values for 1H/15M), `lib/domain/adapters/bybit-market-data-provider.ts`
+  (4H added to the supported-timeframe map).
+- One regression fix required by the 4H addition:
+  `lib/domain/__tests__/bybit-adapter-parity.test.ts`'s
+  "rejects an unsupported timeframe" test used `"4H"` as its example —
+  updated to `"1D"` (still genuinely unsupported) since 4H is now real.
+- Nothing under `lib/strategy/v1/`, `app/api/jobs/scan/route.ts`,
+  `lib/risk/`, `lib/trading/`, `lib/backtest/` was touched — confirmed via
+  `git status` filtered to those paths (zero matches).
+
+**2. StrategyDefinition/API shape** (`lib/research-engine/strategy.ts`):
+`StrategyDefinition<TParams>` = `{ id, name, status: "DRAFT"|"RESEARCH_ONLY",
+supportedAssetClasses, parameterSets, evaluateEntry(closedCandles, params),
+evaluateExit(closedCandles, params) }`. `evaluateEntry`/`evaluateExit`
+receive `closedCandles: readonly CanonicalCandle[]` whose **last element is
+always the bar currently being evaluated** — this is structural, not a
+convention: the engine only ever calls with `fullHistory.slice(0, t+1)`,
+so a strategy cannot read a future bar even by an indexing mistake.
+`evaluateEntry` returns `{kind:"OPPORTUNITY", opportunity: Opportunity}`
+(reusing the existing `lib/domain/opportunity.ts` model) or
+`{kind:"NO_OPPORTUNITY", reason}`. `evaluateExit` returns
+`{kind:"EXIT", reason}` or `{kind:"HOLD"}`. Strategies never do IO.
+
+**3. Exact V2 semantics** (`lib/research-engine/strategies/trb.ts`):
+Long-only, closed-candles-only. Entry on closed bar t: `close[t] >
+highest(high[t-N..t-1])` (N = entryLookback) — the channel strictly
+excludes bar t, verified by an adversarial off-by-one test (a current-bar
+high of 999 must not suppress a real breakout of the correct window).
+Execution: next bar's open (engine, not the strategy). Exit: while in
+position, on closed bar x, `close[x] < lowest(low[x-M..x-1])` (M =
+exitLookback) — same exclusion rule, same adversarial test. No fixed
+profit target — verified by a test where an enormous favorable close
+(100,000 vs. a ~100 channel) produces `HOLD`, not an exit.
+`initialStop` = lowest low of the prior M closed bars, informational for
+sizing only — the strategy's only real exit is the dynamic channel.
+`initialStop < entryPrice` is enforced by the ENGINE at actual fill time
+(not by the strategy at signal time, since the real fill price isn't
+known until the next bar opens) — a gap-down fill that violates it is
+skipped with reason `STOP_NOT_BELOW_ENTRY`, never forced. No score:
+`Opportunity.strength` is left `undefined`; `features` records only
+`entryLookback`/`exitLookback`/`timeframe`/`breakoutChannelHigh`/`signalClose`.
+
+**4. Exact six preregistered configs:** `TRB-1H-20-10`, `TRB-1H-50-20`,
+`TRB-1H-100-50`, `TRB-4H-20-10`, `TRB-4H-50-20`, `TRB-4H-100-50` — three
+channel pairs (20/10, 50/20, 100/50) × two timeframes (1H, 4H). Asserted
+by test to be exactly six, with exactly these ids and exactly these two
+fields (`entryLookback`, `exitLookback`) per config — no ATR, no extra
+lookback, no seventh config.
+
+**5. 4H implementation:** `BYBIT_INTERVAL["4H"] = "240"` (Bybit kline
+interval, minutes), `BYBIT_INTERVAL_MS["4H"] = 14_400_000`.
+`getCandles()`'s timeframe param widened from `"1H"|"15M"` to
+`"1H"|"15M"|"4H"`; the interval-ms computation switched from `timeframe
+=== "1H" ? 3_600_000 : 900_000` to a `BYBIT_INTERVAL_MS[timeframe]`
+lookup — same two values for the same two inputs, confirmed by a
+regression test. `BybitMarketDataProvider`'s `SUPPORTED` map gained
+`"4H": "4H"`. All changes additive; V1 never calls `getCandles` with
+anything but `"1H"`/`"15M"`.
+
+**6. Historical pagination behavior**
+(`lib/research-engine/historical-loader.ts`): paginates backward from
+`endMs` using the provider's `endMs` cursor, one page (`pageSize`,
+default 1000) at a time; merges into oldest-first output; deduplicates by
+`openTime`; a duplicate `openTime` whose OHLCV disagrees across pages is a
+**hard error** (`ConflictingDuplicateCandleError`), never silently
+resolved by picking one; filters to closed candles only and to `openTime
+<= endMs` (no future candles); stops when the provider legitimately runs
+dry (`truncated: false` — a true boundary), when the requested `startMs`
+is covered, or when `maxPages` is hit (`truncated: true`, explicit, never
+a silent gap); records `earliestAvailableMs`/`latestAvailableMs` from
+what was actually obtained, not what was requested; detects gaps by
+comparing consecutive `openTime` deltas against the timeframe's expected
+bucket length. Sits above `MarketDataProvider` — never touches
+`lib/bybit/client.ts` directly and is never called from the scanner.
+
+**7. Data-integrity checks** (`lib/research-engine/candle-integrity.ts`):
+strictly-increasing `openTime`, no duplicates, finite OHLCV,
+`high >= max(open, close)`, `low <= min(open, close)`, `high >= low`,
+`volume >= 0` and finite, unclosed-candle flagging. Pure reporting — never
+mutates or manufactures a candle. `runResearchBacktest` throws if the
+input fails this check, so no trial can silently run on bad data.
+
+**8. Generic backtest semantics** (`lib/research-engine/engine.ts`): does
+NOT import `lib/strategy/v1/signal.ts` (grep-verifiable). Chronological
+single pass; one open position per call (one trial = one instrument × one
+parameter set × one candle range); signal known at close of bar t → fill
+at bar (t+1)'s open, for both entry and exit; if there's no next bar, the
+engine never fakes a fill — a pending entry signal with no next bar
+produces a skip, an open position with no next bar to exit on ends as
+`OPEN_AT_END` (`exitPrice`/`exitTime`/`pnl`/`rMultiple` all `null`).
+Determinism proven by an instrumented strategy wrapper that records the
+largest candle-array length it was ever given and confirms it never
+exceeds `candles.length - 1` (i.e., never one bar beyond the last), plus
+an identical-input/identical-output test and an input-array-immutability
+test.
+
+**9. Normalized risk convention** (`lib/research-engine/position-sizing.ts`):
+`initialEquity` (e.g. 10,000, unitless/normalized) + `riskPct` of CURRENT
+equity per trade (compounds, same convention as
+`lib/risk/position-sizing.ts`'s `PERCENT_OF_EQUITY` mode). `riskBudget =
+equity * riskPct`; `stopDistancePct = (entry - stop) / entry`; `qty =
+(riskBudget / stopDistancePct) / entry`. No leverage, no averaging down,
+no martingale. Rejects (`STOP_NOT_BELOW_ENTRY`) rather than forcing a fit
+when the actual fill makes stop ≥ entry. Explicitly documented as NOT
+representing what the live $20 PAPER account could execute or expected
+dollar profit from it — R-multiples are the comparable unit, not the
+normalized quantity.
+
+**10. Cost-model representation** (`lib/research-engine/cost-model.ts`):
+`entryFeeBps`/`exitFeeBps`/`entrySlippageBps`/`exitSlippageBps`, each with
+exactly one documented meaning, applied exactly once at exactly one fill.
+Entry slippage always moves the price up (against a long buyer); exit
+slippage always moves it down (against a long seller); each fee is
+computed on its own side's post-slippage notional. No value here is
+asserted to be "the correct Bybit cost" — real scenarios are Checkpoint
+3B's job to lock in before any comparison.
+
+**11. Split implementation** (`lib/research-engine/split.ts`): index-based
+60/20/20 by candle count (`Math.floor`), chronological, contiguous
+(`development.endIndex === validation.startIndex`, etc.), no
+randomization anywhere. `registerResearchTrial` records the actual
+candle-timestamp boundaries for each split from this, and a SHA-256
+config fingerprint (`node:crypto`, stable under object-key reordering)
+over strategy/parameter-set/instrument/timeframe/date-ranges/cost model —
+changes if any of them does. **No DB migration** — pure in-memory value
+object per §27; persistence deferred, to be proposed separately if
+Checkpoint 3B needs it.
+
+**12. Benchmark implementation** (`lib/research-engine/benchmark.ts`): buy
+at the first candle's open, hold to the last candle's close;
+`totalReturn` and `maxDrawdownPct` on the close series. Explicitly typed
+with no `rMultiple`/`riskBudget` field — it is a market reference, not a
+risk-sized strategy result; actual comparison is Checkpoint 3B's job.
+
+**13. Tests:** 97 net-new (664 total, up from 567): 19 for TRB (exact
+preregistered matrix, entry/exit channel exclusion incl. two adversarial
+off-by-one cases, unclosed-candle handling, insufficient-history handling
+for both the entry and the risk-reference window, `initialStop`
+correctness, no-score assertion, no-fixed-target assertion), 17 for the
+engine (determinism, no-mutation, an instrumented no-lookahead proof,
+next-bar fill semantics for both entry and exit, no-fill-when-no-next-bar,
+`OPEN_AT_END`, single-open-position, win/loss R correctness, cost
+application, invalid-stop rejection, the integrity gate), plus dedicated
+suites for candle integrity (11), cost model (6), position sizing (5),
+split (6), benchmark (4), metrics (8), trial registry (8), the historical
+loader (10, including conflicting-duplicate rejection and the
+truncated-vs-legitimately-exhausted distinction), the eligibility gate (3,
+including a static source-text check that `getResearchUniverse()` is
+never called as a bypass), and a 4H parity/regression suite (5).
+
+**14-16. typecheck / lint / build:** all clean. `npm run typecheck`: 0
+errors. `npm run lint`: the same 2 pre-existing warnings as every prior
+checkpoint, 0 new. `npm run build`: succeeds, same route manifest as
+before.
+
+**17. Confirmation V1 untouched:** `git status` filtered to
+`lib/strategy/v1/`, `app/api/jobs/scan/route.ts`, `lib/trading/`,
+`lib/risk/` returns zero matches. `lib/backtest/engine.ts` (V1's
+backtester) was not edited and was not turned into the generic engine —
+`lib/research-engine/engine.ts` is a wholly separate file.
+
+**18. Confirmation active PAPER AUTO experiment untouched:** confirmed
+live (read-only query): research session `82058733-...` still `status =
+ACTIVE`, `system_settings.trading_mode = PAPER`,
+`strategy_versions.v1.status = DRAFT` — unchanged. This checkpoint made
+zero Supabase write calls.
+
+**19. Confirmation `paper_enabled = true` count remains 0:** confirmed
+live: `0`. Nothing in this checkpoint reads or writes
+`universe_members.paper_enabled`.
+
+**20. Confirmation LIVE remains disabled:** confirmed live:
+`live_trading_enabled = false`. No `live_enabled` column exists anywhere
+in the schema (unchanged from Checkpoint 2/2.1); this checkpoint added no
+schema at all.
+
+**21. Exact blockers before Checkpoint 3B real historical trials:**
+1. **All five research instruments are still eligibility `UNKNOWN`.** No
+   runtime `discoverBybitSpotInstruments()` /
+   `checkBybitResearchEligibility()` call has ever been made from a
+   deployed environment (this development sandbox is geo-blocked from
+   `api.bybit.com`, same restriction documented since Checkpoint 1/2).
+   `getApprovedResearchInstruments()` will correctly return zero
+   instruments and a blocker report until that runs and produces real
+   `ELIGIBLE` rows with a populated `checked_at` — nothing in this
+   checkpoint works around that, per §20-§22.
+2. **No cost-model scenario is locked in.** `CostModel` is implemented and
+   tested with arbitrary example values; Checkpoint 3B must decide and
+   document the actual bps assumptions (base / 1.5× / 2× per the
+   project's own stress-testing convention) before any result is treated
+   as comparable.
+3. **No real Bybit historical data has been loaded yet.** Every test in
+   this checkpoint uses synthetic or mocked candles; `loadHistoricalCandles`
+   has never been run against the live venue. Multi-year 1H/4H history for
+   BTC/ETH/SOL/XRP/BNB still needs to be fetched, integrity-validated, and
+   gap-checked before a single real trial runs.
+4. **No `ResearchTrial` has been registered against real data or persisted
+   anywhere** — the registry is pure in-memory code; if Checkpoint 3B
+   wants durable trial history, that's a new migration proposal requiring
+   review, not something this checkpoint pre-decided.

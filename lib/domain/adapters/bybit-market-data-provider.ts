@@ -10,14 +10,16 @@ import { CRYPTO_SPOT_INSTRUMENTS, findCryptoInstrumentByVenueSymbol } from "../i
  * behavior stays identical to the client Strategy V1 already depends on
  * (parity is asserted in bybit-adapter-parity.test.ts).
  *
- * Only "1H" and "15M" are supported today because that's all
- * lib/bybit/client.ts's `getCandles` currently accepts — widening that
- * client to the full CANONICAL_TIMEFRAMES set is future work, not something
- * this adapter should fake by silently mis-mapping an interval.
+ * "1H", "15M", and "4H" are supported — the three timeframes
+ * lib/bybit/client.ts's `getCandles` accepts today ("4H" added
+ * Checkpoint 3A for V2 TRB research; "1H"/"15M" behavior for V1 is
+ * unchanged). Widening further is future work, not something this adapter
+ * should fake by silently mis-mapping an interval.
  */
-const SUPPORTED: Partial<Record<CanonicalTimeframe, "1H" | "15M">> = {
+const SUPPORTED: Partial<Record<CanonicalTimeframe, "1H" | "15M" | "4H">> = {
   "1H": "1H",
   "15M": "15M",
+  "4H": "4H",
 };
 
 export class BybitMarketDataProvider implements MarketDataProvider {
@@ -59,7 +61,7 @@ export class BybitMarketDataProvider implements MarketDataProvider {
     if (!venueTimeframe) {
       throw new Error(
         `BybitMarketDataProvider does not support canonical timeframe "${timeframe}" yet ` +
-          `(only 1H/15M are wired to lib/bybit/client.ts today).`,
+          `(only 1H/15M/4H are wired to lib/bybit/client.ts today).`,
       );
     }
 

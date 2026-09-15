@@ -468,3 +468,88 @@ searched regardless of `search_path`). Full detail in `docs/BUILD_STATE.md`.
   `trading_mode=PAPER`, `live_trading_enabled=false`, research session
   still `ACTIVE`, `paper_enabled=true` count still 0, all five instruments
   still `UNKNOWN`/`checked_at NULL`.
+
+## Checkpoint 3A — V2 Trading Range Breakout + generic research engine (pure code, no DB, no live change)
+
+New namespace `lib/research-engine/` — generic multi-strategy research
+machinery, wholly separate from `lib/backtest/` (V1's frozen backtester,
+untouched) and not imported by any production path. Full detail in
+`docs/BUILD_STATE.md`.
+
+- [x] Generic `StrategyDefinition`/`StrategyParameterSet`/entry-exit
+  evaluation contract (`lib/research-engine/strategy.ts`) — strategies are
+  pure, receive only `candles.slice(0, t+1)` (structural no-lookahead),
+  never do IO, never authorize PAPER/LIVE.
+- [x] V2 TRB (`lib/research-engine/strategies/trb.ts`): long-only,
+  closed-candles-only, entry = close > prior-N-bar high channel, exit =
+  close < prior-M-bar low channel (no fixed target), `initialStop` =
+  prior-M-bar low (risk reference only, not a separate stop order). Status
+  `RESEARCH_ONLY`. Exactly six preregistered configs (`TRB-1H-20-10`,
+  `TRB-1H-50-20`, `TRB-1H-100-50`, `TRB-4H-20-10`, `TRB-4H-50-20`,
+  `TRB-4H-100-50`) — no extra parameter set exists, enforced by test.
+- [x] 4H added to the Bybit adapter (`lib/bybit/types.ts`,
+  `lib/bybit/client.ts`, `lib/domain/adapters/bybit-market-data-provider.ts`)
+  — additive; 1H/15M behavior byte-identical (regression-tested).
+- [x] Historical pagination loader (`lib/research-engine/historical-loader.ts`):
+  paginates backward via `endMs`, oldest-first output, dedupes by
+  `openTime`, **rejects** a conflicting duplicate (same time, different
+  OHLCV) rather than picking one, filters unclosed bars, detects gaps,
+  explicit `truncated` flag (never silently incomplete), capped by
+  `maxPages` (never infinite).
+- [x] Candle integrity validation (`lib/research-engine/candle-integrity.ts`):
+  strictly-increasing/no-duplicate openTime, finite OHLCV,
+  `high>=max(open,close)`, `low<=min(open,close)`, `high>=low`,
+  `volume>=0`, unclosed-candle detection. The engine refuses to run on
+  unvalidated data (throws).
+- [x] Generic backtest engine (`lib/research-engine/engine.ts`) — does NOT
+  import `lib/strategy/v1/signal.ts`. Next-bar-open execution for both
+  entry and exit, one open position per call, explicit `OPEN_AT_END`
+  rather than any faked fill, deterministic (proven by an
+  instrumented-strategy test that no call is ever given more than
+  `candles.slice(0, t+1)`).
+- [x] Configurable, unambiguous cost model (`lib/research-engine/cost-model.ts`)
+  — `entryFeeBps`/`exitFeeBps`/`entrySlippageBps`/`exitSlippageBps`, each
+  applied exactly once, at exactly one fill, with one documented meaning
+  (fixes the old `lib/backtest/types.ts` "round-trip... applied each side"
+  ambiguity — that file itself is untouched).
+- [x] Normalized research-only risk sizing
+  (`lib/research-engine/position-sizing.ts`) — `initialEquity`/`riskPct`
+  convention, no leverage, rejects `stop >= entry` rather than forcing a
+  fit. Explicitly documented as NOT representing the real $20 PAPER
+  account.
+- [x] Metrics (`lib/research-engine/metrics.ts`): tradeCount, win/loss,
+  winRate, avgWin/LossR, expectancyR, medianR, profitFactor, gross/net
+  return, maxDrawdownPct, maxDrawdownR, maxLosingStreak, finalEquity,
+  average/medianHoldingBars, totalCosts — computed from CLOSED trades
+  only; `openPositionsAtEnd` reported separately.
+- [x] Deterministic chronological 60/20/20 split
+  (`lib/research-engine/split.ts`) — index-based, contiguous, no
+  randomness.
+- [x] Immutable trial registry (`lib/research-engine/trial.ts`) — pure
+  in-memory record + SHA-256 config fingerprint (stable under key
+  reordering). **No DB migration** — persistence intentionally deferred
+  per §27, to be proposed and reviewed separately if Checkpoint 3B needs
+  it.
+- [x] Buy-and-hold benchmark (`lib/research-engine/benchmark.ts`) — total
+  return + max drawdown, explicitly not a risk-sized strategy result.
+- [x] Eligibility gate (`lib/research-engine/eligible-universe-gate.ts`) —
+  the one approved call site for a real historical run's instrument
+  source: `getEligibleResearchUniverse()` only, never
+  `getResearchUniverse()` as a bypass (asserted by a static source-text
+  test). Did **not** touch `classifyResearchEligibility`'s
+  `minTurnoverUsd24h === null → UNKNOWN` behavior.
+- [x] 97 net-new tests (664 total, up from 567); typecheck/lint/build
+  clean.
+- [x] Confirmed live (read-only query, no write): V1 `status=DRAFT`,
+  `trading_mode=PAPER`, `live_trading_enabled=false`, research session
+  still `ACTIVE`, `paper_enabled=true` count still 0 — this checkpoint
+  made zero Supabase writes.
+- [ ] **Blockers before Checkpoint 3B real historical trials:** (1) all
+  five research instruments are still eligibility `UNKNOWN` — no runtime
+  `discoverBybitSpotInstruments()`/`checkBybitResearchEligibility()` call
+  has ever been made from a deployed environment (this sandbox is
+  geo-blocked); `getApprovedResearchInstruments()` will return zero
+  instruments until that runs. (2) No real cost-model values are locked in
+  yet — Checkpoint 3A only implements and tests the mechanism. (3) No
+  actual Bybit historical candle data has been fetched/paginated for
+  real instruments yet — only synthetic/mocked data was used for tests.

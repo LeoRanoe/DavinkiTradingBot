@@ -45,8 +45,20 @@ export type Ticker = {
   serverTimeMs: number;
 };
 
-/** Maps our internal timeframe names to Bybit's kline "interval" values. */
-export const BYBIT_INTERVAL: Record<"1H" | "15M", string> = {
+/**
+ * Maps our internal timeframe names to Bybit's kline "interval" values.
+ * "4H" added for Checkpoint 3A research (V2 TRB) - purely additive, does
+ * not change "1H"/"15M" (V1's only timeframes).
+ */
+export const BYBIT_INTERVAL: Record<"1H" | "15M" | "4H", string> = {
   "1H": "60",
   "15M": "15",
+  "4H": "240",
+};
+
+/** Bucket length in ms per supported timeframe - used to determine candle closure and detect gaps. */
+export const BYBIT_INTERVAL_MS: Record<"1H" | "15M" | "4H", number> = {
+  "1H": 3_600_000,
+  "15M": 900_000,
+  "4H": 14_400_000,
 };
