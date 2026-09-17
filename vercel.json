@@ -3,6 +3,9 @@
   "functions": {
     "app/api/jobs/scan/route.ts": {
       "regions": ["sin1"]
+    },
+    "app/api/research/bybit-history-page/route.ts": {
+      "regions": ["sin1"]
     }
   }
 }
