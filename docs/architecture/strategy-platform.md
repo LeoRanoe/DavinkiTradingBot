@@ -1,0 +1,372 @@
+# Strategy Platform — Foundation Architecture (Prompt 1)
+
+**Status: foundation only.** No UI beyond what already existed. No
+strategy actually trades through this layer yet. V1's production pipeline
+is untouched. This document describes what this checkpoint built and the
+decisions behind it; see `TASKS.md` / `docs/BUILD_STATE.md` for where it
+sits in the overall build, and `docs/strategies/jeanfx-v1-spec.md` for the
+JeanFX-specific spec this platform will host in Prompt 2.
+
+## 1. Product model / execution flow
+
+```
+MARKET DATA
+    v
+STRATEGY ENGINE      (lib/strategy-platform/ - this checkpoint)
+    v
+OPPORTUNITIES        (Opportunity, lib/strategy-platform/types.ts)
+    v
+PORTFOLIO / RISK POLICY   (existing lib/risk/ - untouched; conflict
+                            resolution, lib/strategy-platform/conflict.ts)
+    v
+EXECUTION ENGINE      (existing lib/trading/ - untouched)
+    v
+PAPER / LIVE VENUE
+```
+
+Strategies (`StrategyContract.evaluate()`) are pure functions:
+`StrategyContext -> StrategyDecision`. Nothing in `lib/strategy-platform/`
+places an order, touches an account balance, reads a credential, or
+authorizes its own execution mode - there is structurally no field on any
+type in this layer that could carry an order id, a credential, or an
+execution authorization. That boundary is enforced by what the types
+*don't* contain, and further reinforced by `authorization.ts` (see S8).
+
+## 2. Entities and relationships
+
+```
+StrategyDefinition (1) --- (N) StrategyPlatformVersion (1) --- (N) StrategyConfiguration (1) --- (N) StrategyAssignment
+       |                                                                                                    |
+  ownerUserId (null = built-in)                                                              userId, mode, instrumentIds
+```
+
+- **StrategyDefinition** - identity: slug, display name, type
+  (`BUILT_IN`/`USER_DEFINED`), owner, visibility. `strategy_definitions`.
+- **StrategyPlatformVersion** - one immutable logic snapshot of a
+  definition. `strategy_platform_versions`.
+- **StrategyConfiguration** - one user's parameterization of a specific
+  immutable version (which markets, which risk %, etc).
+  `strategy_configurations`.
+- **StrategyAssignment** - the explicit "this configuration actually runs,
+  in this mode, on these instruments" record. Nothing runs just because a
+  configuration exists. `strategy_assignments`.
+
+TypeScript mirrors: `lib/strategy-platform/types.ts`
+(`StrategyDefinitionType`, `StrategyLifecycleStatus`,
+`StrategyAssignmentMode`, `StrategyVisibility`).
+
+## 3. Two strategy types, one contract
+
+`StrategyContract` (`lib/strategy-platform/types.ts`) is the single shape
+every strategy - built-in or (once compiled) user-defined - implements:
+
+```ts
+interface StrategyContract {
+  metadata: StrategyMetadata;
+  evaluate(ctx: StrategyContext): StrategyDecision;
+  evaluatePositionManagement?(ctx: StrategyContext): StrategyDecision;
+}
+```
+
+It has zero references to JeanFX, TRB, V1, Bybit, crypto, or forex.
+`StrategyContext` carries `Instrument` (asset-class-tagged, not a Bybit
+symbol) and `CanonicalCandle[]` per `Timeframe`, never a venue-specific
+type.
+
+### Built-in registry (`lib/strategy-platform/registry.ts`)
+
+`BUILT_IN_STRATEGIES` is the one place any future code should resolve a
+strategy by slug - no route should ever hardcode
+`if (strategy === "jeanfx")`. Current entries, all **metadata-only in this
+checkpoint** (see `built-in/*.ts` for why each `evaluate()` is a documented
+`NO_ACTION` stub):
+
+| slug | type | status | note |
+|---|---|---|---|
+| `v1` | BUILT_IN | DRAFT | Still runs through its own dedicated pipeline (`lib/strategy/v1`, `lib/candidates`) - NOT re-routed through this contract, per instruction not to convert V1 production behavior in this checkpoint. |
+| `jeanfx-v1` | BUILT_IN | RESEARCH_ONLY | Detection logic (sweep/MSS/BOS/FVG state machine) is Prompt 2's work; spec lives at `docs/strategies/jeanfx-v1-spec.md`. |
+| `v2-trb` | BUILT_IN | DRAFT | **Honesty note**: no TRB code, spec, or docs exist anywhere in this repository (searched before writing this file, same finding as the JeanFX spec checkpoint). This is a placeholder slug only - nothing was "preserved" because nothing was found. |
+
+### User-defined strategies
+
+A `USER_DEFINED` `StrategyDefinition` has `ownerUserId` set and its
+`StrategyPlatformVersion.definition` is a `DslDefinition` (see S6) rather
+than a pointer to built-in code. There is no path in this checkpoint from
+"user creates a strategy" to actually running it - compiling a
+`DslDefinition` into a live `StrategyContract.evaluate()` is future work;
+this checkpoint ships the DSL, its validator, and its evaluator as
+standalone, independently tested modules (`lib/strategy-platform/dsl/`).
+
+## 4. Generic Opportunity
+
+`Opportunity` (`lib/strategy-platform/types.ts`) is the sole output of the
+strategy-engine layer:
+
+```ts
+type Opportunity = {
+  strategyDefinitionId; strategyVersionId; strategyConfigurationId;
+  instrumentId; side; signalTime;
+  entry; stop; target; partialExitPlan;
+  reasonCodes; featureSnapshot;
+  confidence: number | null;   // only when a strategy defines one mathematically
+  priority: number;
+};
+```
+
+`confidence` is nullable and no strategy is required to populate it - V1's
+100-point score is V1-specific and stays inside V1's own pipeline; it is
+not forced onto this generic shape.
+
+## 5. Versioning and lifecycle
+
+- `StrategyLifecycleStatus`: `DRAFT -> RESEARCH_ONLY -> PAPER_ELIGIBLE ->
+  PAPER_ACTIVE -> LIVE_ELIGIBLE -> ARCHIVED`. This is a *lifecycle*
+  concept, tracked on the version row (`status`, `archived_at`) - it is
+  explicitly **not** an execution authorization. A version can say
+  `LIVE_ELIGIBLE` and still never execute a single LIVE order, because
+  execution authorization is a separate concern (S8).
+- **Immutability**: once a `strategy_platform_versions` row exists, every
+  column except `status`/`archived_at` is frozen forever. Enforced twice,
+  independently:
+  1. A Postgres `BEFORE UPDATE` trigger
+     (`strategy_platform_versions_block_mutation`) that raises on any other
+     column change - the real enforcement boundary.
+  2. `assertVersionMutationAllowed()` in `authorization.ts`, a pure-TS
+     mirror application code (and this repo's test suite, which does not
+     run against live Postgres) can check identically.
+- Editing a strategy means inserting a **new** `strategy_platform_versions`
+  row with `version_number + 1`; the old row and everything that ever
+  referenced it (future configurations, opportunities, research) stays
+  exactly as it was evaluated. No history is ever rewritten.
+
+## 6. Safe declarative DSL (`lib/strategy-platform/dsl/`)
+
+A `DslDefinition` is: `timeframes`, `side`, an `entry` condition tree
+(`DslNode`), a `stop`/`target` formula, and a `parameterSchema`. It is pure
+data - JSON-serializable, storable as-is in
+`strategy_platform_versions.definition`.
+
+### Registry / extensibility (`dsl/registry.ts`)
+
+`IMPLEMENTED_PRIMITIVES` is the allow-list `validate.ts`/`evaluate.ts`
+consult: `ALL, ANY, NOT, COMPARE, CROSS_ABOVE, CROSS_BELOW, SESSION,
+PERCENT_CHANGE, PRICE, VOLUME, CONST, EMA, SMA, RSI, HIGHEST, LOWEST` - 16
+primitives, deliberately a subset of everything the product brief
+eventually wants. `FUTURE_PRIMITIVES` names the rest explicitly (`OHLC,
+ATR, CANDLE_PATTERN, SWING_HIGH, SWING_LOW, FVG, LIQUIDITY_SWEEP, BOS,
+MSS`) so a reference to one of them fails validation with a distinct,
+honest "recognized but not yet implemented" error rather than "unknown
+primitive" or silent ignoring. **No SMC/ICT concept is exposed to
+user-authored strategies in this checkpoint** - swings, FVGs, sweeps,
+BOS/MSS stay exclusive to JeanFX's own (not-yet-built) hardcoded detection
+logic, not the general-purpose DSL, until a future checkpoint deliberately
+promotes one.
+
+Extending the registry later means: add the `DslNode` variant
+(`dsl/types.ts`), add one entry to `IMPLEMENTED_PRIMITIVES`
+(`dsl/registry.ts`), add its `case` to `validate.ts`'s walker and
+`evaluate.ts`'s recursion, add tests. No other file changes.
+
+### Safety (`dsl/limits.ts`, enforced in `validate.ts` and again at runtime
+in `evaluate.ts` - defense in depth, same pattern as the risk engine):
+
+| Limit | Value |
+|---|---|
+| `maxRuleDepth` | 6 |
+| `maxRuleCount` | 60 |
+| `maxLookback` (any indicator period) | 500 |
+| `maxTimeframes` per strategy | 3 |
+| `maxInstrumentsPerConfiguration` | 25 |
+
+- **No eval(), no `new Function()`, no VM.** The evaluator is direct
+  recursion over a typed, closed `DslNode` union - there is no code-as-text
+  path anywhere. `dsl/no-arbitrary-code.test.ts` makes this a checked
+  regression, not just a claim: it scans every non-test file under
+  `dsl/` for `eval(`, `new Function(`, and `vm`/`child_process` usage.
+- **NaN/Infinity**: every `COMPARE`/`CROSS_ABOVE`/`CROSS_BELOW`/
+  `PERCENT_CHANGE` checks `Number.isFinite()` before comparing and returns
+  a typed `{ ok: false, reason: "NON_FINITE_VALUE" }` rather than letting a
+  `NaN` comparison silently evaluate to `false` (which would look
+  indistinguishable from a legitimate "condition not met").
+- **Division by zero**: `PERCENT_CHANGE` returns
+  `{ ok: false, reason: "DIVISION_BY_ZERO" }` rather than propagating
+  `Infinity`/`NaN`.
+- **Lookahead**: `evaluateDslEntry()` filters `candlesByTimeframe[tf]` to
+  `isClosed` candles before any node evaluates. A caller that mistakenly
+  appends an unclosed/future candle cannot influence the result - this is
+  structural (the filter runs first), not a convention strategies must
+  remember, and it is covered by a test that appends a deliberately
+  extreme "future" candle and asserts it has zero effect.
+- **Unbounded nesting / huge expressions / unsupported timeframes**: all
+  rejected by `validate.ts` before a definition is ever stored - see the
+  limits table above and `dsl/validate.test.ts`.
+
+### What the DSL does *not* do yet
+
+Stop/target are a small closed set (`ATR_MULTIPLE`/`FIXED_PCT` for stop,
+`R_MULTIPLE`/`FIXED_PCT` for target) - not a full expression language, and
+not liquidity-pool-aware. Multi-timeframe evaluation is scoped to the
+definition's primary (`timeframes[0]`) timeframe only; true cross-timeframe
+rule evaluation is future work. Both are deliberate scope cuts for this
+checkpoint, not oversights.
+
+## 7. Strategy conflicts (`lib/strategy-platform/conflict.ts`)
+
+Applied once per evaluation pass, after every enabled assignment has
+produced its opportunities - never during evaluation, never by iteration
+order. `resolveConflicts(opportunities, policy)` groups by `instrumentId`
+and, within a group:
+
+- **Same direction (or only one strategy signaled)**: all opportunities
+  coexist, `executable` - portfolio sizing decides how many actually get
+  taken; conflict resolution never silently picks a "winner" here.
+- **Opposing directions, default policy (`BLOCK_OPPOSING_SIGNALS`)**: none
+  become `executable`; both remain visible in `allOpportunities` - **never
+  netted**. This is the conservative default called for explicitly.
+- **`HIGHEST_PRIORITY`**: implemented - the single highest-`priority`
+  opportunity wins; an exact tie blocks the whole group (a tie is itself
+  an unresolved conflict, not a coin flip).
+- **`PORTFOLIO_SELECTOR`**: throws `Error("...not implemented...")`
+  rather than silently falling back to something else - it needs
+  portfolio-wide risk state this checkpoint doesn't have.
+
+## 8. Ownership, authorization, RLS
+
+**Two layers, kept in sync deliberately** (the same pattern CLAUDE.md
+already uses for the risk engine mirroring DB CHECK constraints):
+
+1. **Database RLS** (`supabase/migrations/20260917000000_strategy_platform.sql`)
+   - the real enforcement boundary.
+2. **`lib/strategy-platform/authorization.ts`** - pure TS functions
+   mirroring the same rules, used by future API routes and by this
+   checkpoint's test suite (which, like the rest of this repo, does not
+   run against live Postgres - see `lib/trading/*.test.ts` for the
+   existing fake-store pattern this follows).
+
+Rules (both layers):
+
+- **Read**: `BUILT_IN` or `visibility = 'PUBLIC'` -> any authenticated
+  user (including read-only guests). `USER_DEFINED` + `PRIVATE` -> owner
+  only. A user can never read another user's private custom strategy.
+- **Mutate a definition / create a version**: owner of a `USER_DEFINED`
+  row, and never a guest. Built-in rows are never client-mutable (no
+  insert/update policy grants `type = 'BUILT_IN'` to any authenticated
+  role - only migrations/service-role code can seed them).
+- **Version immutability**: see S5 - trigger + `assertVersionMutationAllowed`.
+- **Configurations / assignments**: plain per-user ownership
+  (`user_id = auth.uid()`), never a guest.
+- **Execution mode**:
+  - New assignments default to `RESEARCH`
+    (`DEFAULT_ASSIGNMENT_MODE`). Never `PAPER`/`LIVE` by default.
+  - `LIVE` has **no path** through `canSetAssignmentMode()` for any
+    viewer/role, and a DB `CHECK (mode <> 'LIVE')` blocks it even if
+    application code were bypassed entirely. This is an **additional**
+    layer scoped to `strategy_assignments` - it does not replace or touch
+    the three existing LIVE-disable layers CLAUDE.md names (the
+    `system_settings` CHECK, the `trades`/`orders` CHECK, and
+    `lib/risk/engine.ts`), which are untouched by this migration.
+  - `PAPER` requires `paper_authorized_by` to be set, and a Postgres
+    trigger (`strategy_assignments_protect_authorization`) - not RLS alone
+    - is what actually stops a non-owner from setting that column, on
+    insert or update, regardless of which RLS policy let the statement
+    through. This was a deliberate fix during this checkpoint: an earlier
+    two-policy RLS-only design would have also blocked a user from routine
+    self-updates (toggling `enabled`) on their own already-authorized
+    row; the trigger lets RLS stay a simple per-user CRUD policy while
+    still making self-service PAPER authorization impossible.
+- **Known limitation, stated rather than silently assumed**: the
+  `strategy_assignments` RLS still requires `user_id = auth.uid()` for
+  every write, including PAPER authorization - correct for today's
+  single-owner app (the owner authorizes their own row), but a true
+  multi-tenant flow where the owner authorizes a *different* user's
+  assignment needs an additional RLS carve-out on top of the existing
+  trigger. Not added here, since no second non-guest role/account exists
+  yet.
+
+## 9. Database migration
+
+`supabase/migrations/20260917000000_strategy_platform.sql` - **additive
+only, not yet applied to the live Supabase project** (schema changes to
+shared infrastructure are treated as requiring explicit confirmation, and
+this checkpoint's brief only asked for `typecheck`/`lint`/`test`/`build`,
+not a live verification pass - see the final report for how to apply it
+when ready).
+
+New tables: `strategy_definitions`, `strategy_platform_versions`,
+`strategy_configurations`, `strategy_assignments`. New enums:
+`strategy_definition_type`, `strategy_platform_status`,
+`strategy_assignment_mode`, `strategy_visibility`.
+
+**Compatibility decision on the legacy `strategy_versions` table**
+(existing since the original schema, used by V1's `signals`/`trades`/
+`backtests`/`knowledge_documents` foreign keys): it is **not** touched,
+renamed, or repointed. The new `strategy_platform_versions` table has a
+deliberately different name and a different shape (explicit
+definition/ownership model, immutability trigger) rather than overloading
+the legacy one. A future adapter could map V1's single legacy row onto one
+`strategy_definitions`/`strategy_platform_versions` pair purely for
+discoverability in the registry; this checkpoint does not attempt that
+mapping, since V1's actual execution never needs to go through it.
+
+## 10. Future extensibility (not built now, not precluded)
+
+- `StrategyVisibility` already has `PUBLIC`/`UNLISTED` alongside the
+  default `PRIVATE`, and `strategy_definitions_select` RLS already honors
+  it - so a later marketplace/sharing feature is additive (new UI +
+  flipping a row's `visibility`), not a schema rework. No marketplace
+  functionality is built now.
+- `ConflictPolicy` already has 4 named values with 2 implemented -
+  `PORTFOLIO_SELECTOR` is a clean extension point once portfolio-wide risk
+  state exists.
+- The DSL registry (`IMPLEMENTED_PRIMITIVES`/`FUTURE_PRIMITIVES`) is
+  designed so JeanFX's own SMC/ICT primitives (FVG, swings, sweeps,
+  BOS/MSS) can be promoted from "future" to "implemented" for user
+  strategies later, independently of whether JeanFX's own built-in
+  `evaluate()` (hardcoded, not DSL-based) uses the same or different code.
+
+## 11. Tests
+
+All under `lib/strategy-platform/` and `lib/indicators/sma.test.ts`
+(the one new pure-function indicator this checkpoint added, needed by the
+`SMA` DSL primitive):
+
+- `registry.test.ts` - built-in registry completeness, no duplicate slugs,
+  unknown-slug resolution, V1 not re-routed.
+- `conflict.test.ts` - same-direction coexistence, opposing-signal
+  blocking with no netting, order-independence, `HIGHEST_PRIORITY`
+  resolution and tie-blocking, `PORTFOLIO_SELECTOR` failing loudly,
+  per-instrument grouping.
+- `authorization.test.ts` - definition read/mutate isolation (including
+  guest exclusion and `PUBLIC` visibility), version immutability
+  (allowed vs rejected field changes), configuration/assignment
+  ownership isolation, default-RESEARCH, LIVE refused unconditionally
+  for every role, no custom-strategy-creation path to LIVE, PAPER
+  requires owner authorization, an already-authorized row survives a
+  routine self-update.
+- `dsl/validate.test.ts` - valid definitions accepted; unknown primitive
+  rejected; future-looking primitives (FVG/BOS/MSS/SWING/
+  LIQUIDITY_SWEEP/CANDLE_PATTERN) rejected distinctly; excessive
+  depth/count/lookback/timeframes rejected; VALUE-vs-CONDITION position
+  mismatches rejected.
+- `dsl/evaluate.test.ts` - deterministic value/condition evaluation;
+  division-by-zero and non-finite-value guards; insufficient-history
+  guard; a deliberately-appended unclosed "future" candle proven to have
+  zero effect; missing-market-data handling.
+- `dsl/no-arbitrary-code.test.ts` - static regression guard: no
+  `eval`/`Function`/`vm`/`child_process` anywhere under `dsl/`.
+
+497/497 tests pass repo-wide (57 new), `npm run typecheck`, `npm run
+lint` (only the two pre-existing non-blocking warnings already documented
+in `docs/BUILD_STATE.md`), and `npm run build` all clean.
+
+## 12. Safety carried forward unchanged
+
+- V1 (`lib/strategy/v1/`, `lib/candidates/`, `app/api/jobs/scan/route.ts`)
+  is untouched - byte-for-byte, not just behaviorally.
+- The three existing LIVE-disable layers (system_settings CHECK,
+  trades/orders CHECK, `lib/risk/engine.ts`) are untouched.
+- PAPER's existing behavior (Telegram approval flow, position management)
+  is untouched.
+- This checkpoint adds a **fourth, new-table-scoped** LIVE-disable layer
+  (`strategy_assignments_live_forbidden` CHECK) rather than modifying any
+  of the three above.
