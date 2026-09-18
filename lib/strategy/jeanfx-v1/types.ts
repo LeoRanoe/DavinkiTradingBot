@@ -1,44 +1,22 @@
 /**
  * JeanFX v1 - pure domain types.
  *
- * Spec-only checkpoint: see docs/strategies/jeanfx-v1-spec.md for the full
- * rationale, every IMPLEMENTATION ASSUMPTION, and unresolved ambiguities.
- * No detection/state-machine logic is implemented yet - types only.
+ * See docs/strategies/jeanfx-v1-spec.md for the full rationale, every
+ * IMPLEMENTATION ASSUMPTION, and unresolved ambiguities.
  *
  * Deliberately framework/exchange independent: strategy functions built on
  * these types take Instrument + CanonicalCandle[], never a Bybit symbol or
  * client type (see spec S17, forex/gold readiness).
  */
 
-export type Direction = "LONG" | "SHORT";
-
-export type TradingSession = "ASIA" | "LONDON" | "NEW_YORK";
+import type { SwingPoint } from "./primitives/swings";
+export type { SwingPoint } from "./primitives/swings";
+import type { Direction } from "@/lib/strategy-platform/types";
+export type { CanonicalCandle, Direction, Instrument, AssetClass, TradingSession } from "@/lib/strategy-platform/types";
 
 /** Research-only status; distinct from V1's DRAFT/PAPER_APPROVED/LIVE_APPROVED
  * ladder so JeanFX cannot inherit a promotion path meant for another strategy. */
 export type JeanfxStatus = "RESEARCH_ONLY" | "PAPER_APPROVED" | "LIVE_APPROVED";
-
-export type AssetClass = "CRYPTO" | "FOREX" | "METAL";
-
-export type Instrument = {
-  /** Canonical id, e.g. "BTCUSDT", "XAUUSD", "EURUSD" - never a venue-specific symbol. */
-  id: string;
-  assetClass: AssetClass;
-  /** Price increment for level/tolerance math; instrument-specific, not Bybit-specific. */
-  pipSize: number;
-};
-
-export type CanonicalCandle = {
-  instrumentId: string;
-  timeframe: "H1" | "M30" | "M15" | "M5";
-  openTime: number; // ms epoch
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-  isClosed: boolean;
-};
 
 export type LiquiditySide = "BUY_SIDE" | "SELL_SIDE";
 
@@ -49,12 +27,6 @@ export type LiquidityPool = {
   sourceCandleTimes: number[];
   kind: "EQUAL_HIGH_LOW" | "PRIOR_SWING" | "SESSION_HIGH_LOW";
   swept: boolean;
-};
-
-export type SwingPoint = {
-  kind: "SWING_HIGH" | "SWING_LOW";
-  candleTime: number;
-  price: number;
 };
 
 export type Sweep = {
@@ -87,33 +59,31 @@ export type ConfirmationCandle = {
   candleTime: number;
 };
 
-/** Bullish/bearish state machine states - see spec S6/S7. Mirrored, not
- * merged, so bullish/bearish progress can never be conflated. */
-export type JeanfxState =
-  | "S0_IDLE"
-  | "S1_HTF_BIAS_CONFIRMED"
-  | "S2_LIQUIDITY_IDENTIFIED"
-  | "S3_SWEEP_CONFIRMED"
-  | "S4_MSS_CONFIRMED"
-  | "S5_FVG_FORMED"
-  | "S6_RETRACED_INTO_FVG"
-  | "S7_CONFIRMATION_CANDLE"
-  | "S8_SETUP_VALID"
-  | "S9_NO_TRADE";
+/**
+ * State machine states - see docs/strategies/jeanfx-v1-spec.md and
+ * state-machine.ts. Bullish and bearish setups share the same state names
+ * and the same walk function, distinguished by the `direction` field on
+ * each transition/result - never a separate parallel enum, so bullish and
+ * bearish progress can never be conflated.
+ */
+export type JeanfxStateName =
+  | "WAITING_FOR_BIAS"
+  | "WAITING_FOR_LIQUIDITY_SWEEP"
+  | "WAITING_FOR_STRUCTURE_CONFIRMATION"
+  | "WAITING_FOR_FVG"
+  | "WAITING_FOR_RETRACE"
+  | "WAITING_FOR_CONFIRMATION"
+  | "READY"
+  | "INVALIDATED";
 
-export type NoTradeReason =
-  | "NO_HTF_BIAS"
-  | "NO_LIQUIDITY_IDENTIFIED"
-  | "NO_SWEEP"
-  | "NO_MSS_AFTER_SWEEP"
-  | "NO_FVG_IN_DISPLACEMENT"
-  | "NO_RETRACEMENT"
-  | "FVG_INVALIDATED"
-  | "NO_CONFIRMATION_CANDLE"
-  | "NO_VALID_TARGET_RR"
-  | "MAX_TRADES_REACHED"
-  | "OUTSIDE_SESSION"
-  | "MISSING_MARKET_DATA";
+/** Every state transition carries why, when, and at what price - never a bare state change. */
+export type JeanfxStateTransition = {
+  state: JeanfxStateName;
+  direction: Direction;
+  reasonCode: string;
+  timestamp: number; // candle openTime that caused the transition
+  priceLevel: number | null;
+};
 
 export type JeanfxSetup = {
   direction: Direction;
@@ -129,5 +99,5 @@ export type JeanfxSetup = {
 };
 
 export type JeanfxEvaluation =
-  | { kind: "NO_SIGNAL"; reason: NoTradeReason; state: JeanfxState }
-  | { kind: "SETUP"; strategyVersionLabel: string; setup: JeanfxSetup };
+  | { kind: "NO_SIGNAL"; state: JeanfxStateName; reasonCode: string; transitions: JeanfxStateTransition[] }
+  | { kind: "SETUP"; strategyVersionLabel: string; setup: JeanfxSetup; transitions: JeanfxStateTransition[] };

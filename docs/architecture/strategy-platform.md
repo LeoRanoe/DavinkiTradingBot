@@ -1,11 +1,19 @@
-# Strategy Platform — Foundation Architecture (Prompt 1)
+# Strategy Platform — Architecture (Prompt 1 foundation + Prompt 2 build-out)
 
-**Status: foundation only.** No UI beyond what already existed. No
-strategy actually trades through this layer yet. V1's production pipeline
-is untouched. This document describes what this checkpoint built and the
-decisions behind it; see `TASKS.md` / `docs/BUILD_STATE.md` for where it
-sits in the overall build, and `docs/strategies/jeanfx-v1-spec.md` for the
-JeanFX-specific spec this platform will host in Prompt 2.
+**Status: usable.** As of Prompt 2, JeanFX is fully implemented and runs
+through this platform's generic contract; a first Strategy Builder UI
+exists; the DSL can be compiled into a running strategy and backtested
+through the same generic engine as JeanFX. V1's production pipeline
+remains untouched. This document was written during Prompt 1 (sections 1-9
+below describe that foundation) and extended in place during Prompt 2
+(section 13) rather than rewritten, so it stays one coherent history rather
+than two documents that could drift apart. See `TASKS.md` /
+`docs/BUILD_STATE.md` for where this sits in the overall build, and
+`docs/strategies/jeanfx-v1-spec.md` for the JeanFX-specific spec.
+
+**Read section 13 first if you only have time for one section** - it's the
+Prompt 2 summary and supersedes anything below it says "not implemented
+yet" or "future work" that Prompt 2 actually built.
 
 ## 1. Product model / execution flow
 
@@ -203,8 +211,8 @@ in `evaluate.ts` - defense in depth, same pattern as the risk engine):
 
 ### What the DSL does *not* do yet
 
-Stop/target are a small closed set (`ATR_MULTIPLE`/`FIXED_PCT` for stop,
-`R_MULTIPLE`/`FIXED_PCT` for target) - not a full expression language, and
+Stop/target are a small closed set (`ATR_MULTIPLE`/`FIXED_PERCENT` for stop,
+`R_MULTIPLE`/`FIXED_PERCENT` for target) - not a full expression language, and
 not liquidity-pool-aware. Multi-timeframe evaluation is scoped to the
 definition's primary (`timeframes[0]`) timeframe only; true cross-timeframe
 rule evaluation is future work. Both are deliberate scope cuts for this
@@ -370,3 +378,138 @@ in `docs/BUILD_STATE.md`), and `npm run build` all clean.
 - This checkpoint adds a **fourth, new-table-scoped** LIVE-disable layer
   (`strategy_assignments_live_forbidden` CHECK) rather than modifying any
   of the three above.
+
+## 13. Prompt 2 summary — JeanFX, the Strategy Builder, and a generic backtest engine
+
+Everything below was added in Prompt 2, on top of the foundation in
+sections 1-12 above, which stayed structurally unchanged (types, registry
+shape, conflict policy, authorization, migration) except where noted.
+
+### JeanFX is implemented and runs through the generic contract
+
+`lib/strategy/jeanfx-v1/primitives/` (swings, equal-levels, sweep,
+structure/BOS-MSS, FVG, candles, sessions, liquidity - each with its own
+tests) plus `state-machine.ts` (`runJeanfxDirection()`) implement the full
+sequence from `docs/strategies/jeanfx-v1-spec.md`. Wired into the platform
+at `lib/strategy-platform/built-in/jeanfx-v1.ts` - the ONLY file where
+JeanFX-specific code touches `lib/strategy-platform/`. Nothing in
+`backtest.ts`, `dsl/`, `conflict.ts`, or `authorization.ts` knows JeanFX
+exists; they only know `StrategyContract`.
+
+### The DSL primitive library grew, using JeanFX's own primitives
+
+`SWING_HIGH`/`SWING_LOW`/`BOS`/`LIQUIDITY_SWEEP`/`FVG`/`CANDLE_PATTERN`/
+`ATR` moved from `FUTURE_PRIMITIVES` to `IMPLEMENTED_PRIMITIVES`
+(`dsl/registry.ts`) - each one a thin `dsl/evaluate.ts` case that calls
+the exact same function JeanFX's state machine calls
+(`lib/strategy/jeanfx-v1/primitives/*`), never a second implementation.
+`MSS` stays exclusive to JeanFX (it needs reversal-vs-prior-structure
+context a stateless per-candle DSL condition can't cleanly express);
+`OHLC` stays out as redundant with `PRICE(field)`.
+
+### A DSL definition compiles into a real, runnable StrategyContract
+
+`dsl/compile.ts` (`compileDslStrategy()`) validates once (at compile time,
+mirroring "a version is validated once, then immutable") and returns a
+`StrategyContract` whose `evaluate()` calls the same `evaluateDslEntry()`
+the DSL's own tests exercise directly, plus one of a closed set of stop
+builders (`FIXED_PERCENT`/`ATR_MULTIPLE`/`BELOW_SWING`/`ABOVE_SWING`/
+`BELOW_SIGNAL_LOW`/`ABOVE_SIGNAL_HIGH`, LONG/SHORT-semantic-checked by
+`validate.ts`) and target builders
+(`R_MULTIPLE`/`FIXED_PERCENT`/`NEXT_SWING`/`NEXT_LIQUIDITY_POOL`). No new
+execution path - no eval, no dynamic code, ever.
+
+### One generic backtest engine, not two
+
+`lib/strategy-platform/backtest.ts` (`runGenericBacktest()`) takes any
+`StrategyContract` - built-in or DSL-compiled - plus historical candles
+per timeframe, and steps through bar by bar: trims every timeframe to "as
+of this bar" before calling `evaluate()` (no lookahead), enters no earlier
+than the next bar's open, and reuses `evaluateTradeRisk()`/
+`computePositionSizeFromBudget()` UNCHANGED for LONG sizing - the exact
+math live PAPER trading uses (`computeMetrics()` in
+`lib/backtest/metrics.ts` was loosened to a structural `Pick` type so both
+V1's and the generic engine's trade records can share it, with zero
+behavior change for V1). SHORT sizing is a separate, self-contained,
+clearly-labeled research-only mirror of the same formulas - deliberately
+NOT routed through the production (intentionally spot/long-only) risk
+engine, which this checkpoint does not modify. Every trade carries a
+`direction` so a SHORT backtest can never be mistaken for an executable
+one. `buildWarnings()` emits neutral-language evidence-quality warnings
+(too few trades, short history, high parameter count, in-sample only,
+zero-cost assumption) - never "profitable strategy" from one run.
+
+### Strategy Builder UI (first cut, not the final polish pass)
+
+`/strategies` - built-in cards from the registry (JeanFX marked
+Featured) plus the signed-in user's custom strategies (gracefully empty,
+not a crash, if the migration below hasn't been applied to an
+environment). `/strategies/new` - a single scrolling wizard (Basics,
+Markets & Timeframes, a real visual ALL/ANY/NOT rule builder over the
+actual `DslNode` tree via `dsl/editor-model.ts`, Stop, Target,
+Preview/Validate with a plain-English summary from `dsl/describe.ts` and
+a JSON export view) rather than 12 separate routed steps - "exit
+conditions" and "risk compatibility" are folded into Stop/Target and the
+validation panel, since the DSL has no separate exit-condition node type
+yet. `/strategies/[slug]` - Overview/Rules/Versions/"Use this strategy"
+tabs, working for both built-in and custom strategies off one
+`strategy_definitions` lookup by slug. "Use this strategy" only ever
+offers RESEARCH/SHADOW (`components/strategy-builder/use-strategy-form.tsx`
+-> `POST /api/strategies/assign`); PAPER/LIVE are never in that form's
+option list, matching the DB CHECK/trigger layer from section 8.
+
+Known UI scope cuts, stated rather than hidden: no drag-and-drop (the rule
+builder is add/remove/nest via buttons and selects, which is still fully
+"visual, not JSON" per the brief); `NOT` only wraps a single leaf
+condition in the editor, not an arbitrary subgroup (the underlying DSL
+supports `NOT` around anything - `dsl/evaluate.ts` doesn't care - only the
+UI's `editor-model.ts` scopes it this way); the generic backtest page is
+not yet built as its own route - `runGenericBacktest()` exists and is
+tested, but nothing in `app/` calls it yet for an arbitrary saved strategy
+version. Mobile layout reuses this repo's existing Tailwind responsive
+patterns (stacked flex/grid, `sm:`-gated multi-column) rather than a
+dedicated mobile design pass.
+
+### Import/export and templates
+
+`import-export.ts`: JSON export/import gated by the exact same
+`validateDslDefinition()` a freshly-authored strategy goes through -
+`importDslDefinition()` only ever parses JSON (never executes it) and
+`assertImportTargetSlugIsSafe()` refuses to let an import target a
+built-in slug. `templates.ts`: three starter templates (EMA Trend, RSI
+Pullback, Breakout), each a plain valid `DslDefinition`, clearly labeled,
+with `cloneDefinition()` as the one primitive "duplicate as custom
+strategy" / "duplicate JeanFX configuration" actually needs.
+
+### Database: one more additive migration, not a rewrite
+
+`supabase/migrations/20260918000000_strategy_platform_seed_built_ins.sql`
+- additive, idempotent, seeds `strategy_definitions`/
+`strategy_platform_versions` rows for `v1`/`jeanfx-v1`/`v2-trb` (a
+built-in's `definition` column is a `{builtIn: true, slug}` pointer, never
+DSL - its real logic stays in code) so "Use this strategy" has a real
+`strategy_version_id` to point a configuration at for built-ins, the same
+as for custom strategies. Like the Prompt 1 migration, **neither migration
+has been applied to the live Supabase project** - see the final report for
+how to apply both when ready. `app/api/strategies/route.ts` and
+`app/api/strategies/assign/route.ts` follow this repo's existing mutation
+convention (RLS-respecting server client, `isOwner()` gate, Zod body
+validation) and cast the Supabase client for just these two new tables,
+since `lib/supabase/database.types.ts` won't include them until it's
+regenerated against the live schema post-migration.
+
+### Tests added in Prompt 2
+
+Per-primitive unit tests (`lib/strategy/jeanfx-v1/primitives/*.test.ts`);
+`state-machine.test.ts` (LONG, SHORT as an exact mirror, bias mismatch,
+flat-market no-signal, FVG invalidation, no-valid-target invalidation, no
+lookahead via an appended absurd future candle); `built-in/jeanfx-v1.test.ts`;
+DSL acceptance tests for every newly-implemented primitive plus their
+validation-rejection cases; `dsl/compile.test.ts`; `backtest.test.ts`
+(LONG trade generation with warnings, no-overlapping-positions, SHORT
+symmetric stop/target, and the JeanFX built-in strategy running through
+the identical `runGenericBacktest()` entry point as a compiled DSL
+strategy); `templates.test.ts`; `import-export.test.ts` (including a
+"sneaky" payload proving a string that looks like JS source is inert data,
+never executed); `editor-model.test.ts` (UI state -> DSL -> validation
+round trip); `describe.test.ts`.

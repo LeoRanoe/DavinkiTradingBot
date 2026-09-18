@@ -8,7 +8,7 @@ function baseDef(entry: DslNode): DslDefinition {
     timeframes: ["M15"],
     side: ["LONG"],
     entry,
-    stop: { kind: "FIXED_PCT", pct: 0.01 },
+    stop: { kind: "FIXED_PERCENT", pct: 0.01 },
     target: { kind: "R_MULTIPLE", multiple: 2 },
     parameterSchema: {},
   };
@@ -44,8 +44,11 @@ describe("DSL validation", () => {
     if (!result.ok) expect(result.errors.join(" ")).toMatch(/unknown primitive/);
   });
 
-  it("rejects future-looking primitives (FVG/BOS/MSS/SWING/LIQUIDITY_SWEEP/CANDLE_PATTERN) distinctly", () => {
-    for (const type of ["FVG", "BOS", "MSS", "SWING_HIGH", "SWING_LOW", "LIQUIDITY_SWEEP", "CANDLE_PATTERN"]) {
+  it("rejects still-future primitives (MSS/OHLC) distinctly", () => {
+    // FVG/BOS/SWING_HIGH/SWING_LOW/LIQUIDITY_SWEEP/CANDLE_PATTERN were
+    // promoted to implemented by JeanFX's build-out (see dsl/registry.ts) -
+    // covered by their own acceptance tests below instead.
+    for (const type of ["MSS", "OHLC"]) {
       const def = baseDef({ type } as unknown as DslNode);
       const result = validateDslDefinition(def);
       expect(result.ok).toBe(false);
@@ -108,5 +111,27 @@ describe("DSL validation", () => {
   it("rejects a non-positive/non-integer period", () => {
     const result = validateDslDefinition(baseDef({ type: "RSI", period: 0 }));
     expect(result.ok).toBe(false);
+  });
+
+  it("accepts every structure primitive promoted by JeanFX's build-out (SWING/BOS/LIQUIDITY_SWEEP/FVG/CANDLE_PATTERN/ATR)", () => {
+    const cases: DslNode[] = [
+      { type: "ALL", children: [{ type: "COMPARE", comparator: "GT", left: { type: "PRICE", field: "close" }, right: { type: "SWING_HIGH", leftRightBars: 2 } }] },
+      { type: "BOS", direction: "LONG", leftRightBars: 2 },
+      { type: "LIQUIDITY_SWEEP", side: "SELL_SIDE", leftRightBars: 2, equalHighLowAtrMultiple: 0.1, atrPeriod: 14 },
+      { type: "FVG", direction: "LONG" },
+      { type: "CANDLE_PATTERN", pattern: "HAMMER" },
+      { type: "BULLISH_CANDLE" },
+      { type: "COMPARE", comparator: "GT", left: { type: "ATR", period: 14 }, right: { type: "CONST", value: 0 } },
+    ];
+    for (const entry of cases) {
+      const result = validateDslDefinition(baseDef(entry));
+      expect(result.ok, `expected ${entry.type} to validate: ${!result.ok && result.errors.join(", ")}`).toBe(true);
+    }
+  });
+
+  it("rejects an invalid CANDLE_PATTERN name and an invalid BOS/LIQUIDITY_SWEEP direction/side", () => {
+    expect(validateDslDefinition(baseDef({ type: "CANDLE_PATTERN", pattern: "DOJI" } as unknown as DslNode)).ok).toBe(false);
+    expect(validateDslDefinition(baseDef({ type: "BOS", direction: "UP", leftRightBars: 2 } as unknown as DslNode)).ok).toBe(false);
+    expect(validateDslDefinition(baseDef({ type: "LIQUIDITY_SWEEP", side: "MIDDLE", leftRightBars: 2, equalHighLowAtrMultiple: 0.1, atrPeriod: 14 } as unknown as DslNode)).ok).toBe(false);
   });
 });

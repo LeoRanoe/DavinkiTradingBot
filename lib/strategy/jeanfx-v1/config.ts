@@ -37,6 +37,13 @@ export const JEANFX_V1_PARAMS = {
     maxOppositeWickRatio: 0.5,
   },
 
+  // How many structure-timeframe (M15) bars a setup may wait in each stage
+  // before it gives up and resumes hunting for a fresh sweep - the brief
+  // gives no bound, so these are IMPLEMENTATION ASSUMPTION timeouts rather
+  // than leaving a setup "waiting" forever on stale structure.
+  mssTimeoutBars: 20,
+  fvgTimeoutBars: 20,
+
   // Sourced directly from the brief, not an assumption.
   rrMinimum: 3.0,
   riskPct: 0.01,
@@ -64,3 +71,48 @@ export const JEANFX_V1_PROPOSED_SESSIONS: TradingSessionWindow[] = [
 ];
 
 export type JeanfxV1Params = typeof JEANFX_V1_PARAMS;
+
+/**
+ * User-tunable configuration (spec Prompt 2 S6). Deliberately a SMALL
+ * surface: everything else in JEANFX_V1_PARAMS above (swing bars, equal-
+ * level tolerance, displacement multiple, stop buffer, confirmation wick
+ * ratios) belongs to the immutable VERSION, not to a user's
+ * StrategyConfiguration - exposing those would let a user quietly overfit
+ * JeanFX into a different strategy while still calling it "JeanFX".
+ */
+export type JeanfxSessionFilterChoice = "LONDON" | "NEW_YORK" | "LONDON_AND_NEW_YORK" | "ALL";
+export type JeanfxConfirmationPatternsChoice = "ENGULFING" | "HAMMER_SHOOTING_STAR" | "BOTH";
+
+export type JeanfxUserConfig = {
+  biasTimeframe: "H1" | "M30";
+  riskPct: number; // validated externally against the owner's risk settings, same as every other strategy
+  sessionFilter: JeanfxSessionFilterChoice;
+  confirmationPatterns: JeanfxConfirmationPatternsChoice;
+};
+
+export const JEANFX_DEFAULT_USER_CONFIG: JeanfxUserConfig = {
+  biasTimeframe: JEANFX_V1_PARAMS.biasTimeframe,
+  riskPct: JEANFX_V1_PARAMS.riskPct,
+  sessionFilter: "ALL",
+  confirmationPatterns: "BOTH",
+};
+
+export function validateJeanfxUserConfig(config: Partial<JeanfxUserConfig>): { ok: true; value: JeanfxUserConfig } | { ok: false; errors: string[] } {
+  const errors: string[] = [];
+  const merged: JeanfxUserConfig = { ...JEANFX_DEFAULT_USER_CONFIG, ...config };
+
+  if (merged.biasTimeframe !== "H1" && merged.biasTimeframe !== "M30") {
+    errors.push("biasTimeframe must be 'H1' or 'M30'");
+  }
+  if (!Number.isFinite(merged.riskPct) || merged.riskPct <= 0 || merged.riskPct > 0.05) {
+    errors.push("riskPct must be a positive number no greater than 0.05 (5%)");
+  }
+  if (!["LONDON", "NEW_YORK", "LONDON_AND_NEW_YORK", "ALL"].includes(merged.sessionFilter)) {
+    errors.push("sessionFilter must be one of LONDON, NEW_YORK, LONDON_AND_NEW_YORK, ALL");
+  }
+  if (!["ENGULFING", "HAMMER_SHOOTING_STAR", "BOTH"].includes(merged.confirmationPatterns)) {
+    errors.push("confirmationPatterns must be one of ENGULFING, HAMMER_SHOOTING_STAR, BOTH");
+  }
+
+  return errors.length === 0 ? { ok: true, value: merged } : { ok: false, errors };
+}

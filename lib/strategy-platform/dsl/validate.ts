@@ -6,6 +6,7 @@ const VALID_TIMEFRAMES = new Set(["H1", "M30", "M15", "M5"]);
 const VALID_SESSIONS = new Set(["ASIA", "LONDON", "NEW_YORK"]);
 const VALID_COMPARATORS = new Set(["GT", "GTE", "LT", "LTE", "EQ"]);
 const VALID_PRICE_FIELDS = new Set(["open", "high", "low", "close"]);
+const VALID_CANDLE_PATTERNS = new Set(["BULLISH_ENGULFING", "BEARISH_ENGULFING", "HAMMER", "SHOOTING_STAR"]);
 
 type WalkState = { errors: string[]; nodeCount: number };
 
@@ -105,12 +106,38 @@ function walk(node: unknown, expectedKind: PrimitiveResultKind, depth: number, s
       if (n.child) walk(n.child, "VALUE", depth + 1, state);
       return;
     case "RSI":
-      checkPeriod(n.period, state.errors, "RSI");
+    case "ATR":
+      checkPeriod(n.period, state.errors, n.type);
       return;
     case "HIGHEST":
     case "LOWEST":
       checkPeriod(n.period, state.errors, n.type);
       walk(n.child, "VALUE", depth + 1, state);
+      return;
+    case "SWING_HIGH":
+    case "SWING_LOW":
+      checkPeriod(n.leftRightBars, state.errors, n.type);
+      return;
+    case "BULLISH_CANDLE":
+    case "BEARISH_CANDLE":
+      return;
+    case "CANDLE_PATTERN":
+      if (!VALID_CANDLE_PATTERNS.has(n.pattern)) state.errors.push(`CANDLE_PATTERN: unknown pattern '${n.pattern}'`);
+      return;
+    case "BOS":
+      if (n.direction !== "LONG" && n.direction !== "SHORT") state.errors.push("BOS: direction must be 'LONG' or 'SHORT'");
+      checkPeriod(n.leftRightBars, state.errors, "BOS.leftRightBars");
+      return;
+    case "LIQUIDITY_SWEEP":
+      if (n.side !== "BUY_SIDE" && n.side !== "SELL_SIDE") state.errors.push("LIQUIDITY_SWEEP: side must be 'BUY_SIDE' or 'SELL_SIDE'");
+      checkPeriod(n.leftRightBars, state.errors, "LIQUIDITY_SWEEP.leftRightBars");
+      checkPeriod(n.atrPeriod, state.errors, "LIQUIDITY_SWEEP.atrPeriod");
+      if (!Number.isFinite(n.equalHighLowAtrMultiple) || n.equalHighLowAtrMultiple <= 0) {
+        state.errors.push("LIQUIDITY_SWEEP: equalHighLowAtrMultiple must be a positive finite number");
+      }
+      return;
+    case "FVG":
+      if (n.direction !== "LONG" && n.direction !== "SHORT") state.errors.push("FVG: direction must be 'LONG' or 'SHORT'");
       return;
   }
 }
@@ -138,21 +165,52 @@ export function validateDslDefinition(def: DslDefinition): DslValidationResult {
   const state: WalkState = { errors, nodeCount: 0 };
   walk(def.entry, "CONDITION", 0, state);
 
-  if (def.stop.kind === "ATR_MULTIPLE") {
-    checkPeriod(def.stop.atrPeriod, errors, "stop.atrPeriod");
-    if (!Number.isFinite(def.stop.multiple) || def.stop.multiple <= 0) errors.push("stop.multiple must be a positive finite number");
-  } else if (def.stop.kind === "FIXED_PCT") {
-    if (!Number.isFinite(def.stop.pct) || def.stop.pct <= 0) errors.push("stop.pct must be a positive finite number");
-  } else {
-    errors.push("stop: unknown kind");
+  const sides = new Set(Array.isArray(def.side) ? def.side : []);
+
+  switch (def.stop.kind) {
+    case "FIXED_PERCENT":
+      if (!Number.isFinite(def.stop.pct) || def.stop.pct <= 0) errors.push("stop.pct must be a positive finite number");
+      break;
+    case "ATR_MULTIPLE":
+      checkPeriod(def.stop.atrPeriod, errors, "stop.atrPeriod");
+      if (!Number.isFinite(def.stop.multiple) || def.stop.multiple <= 0) errors.push("stop.multiple must be a positive finite number");
+      break;
+    case "BELOW_SWING":
+    case "ABOVE_SWING":
+      checkPeriod(def.stop.leftRightBars, errors, "stop.leftRightBars");
+      if (!Number.isFinite(def.stop.bufferPct) || def.stop.bufferPct < 0) errors.push("stop.bufferPct must be a non-negative finite number");
+      if (def.stop.kind === "BELOW_SWING" && !sides.has("LONG")) errors.push("stop BELOW_SWING only makes sense for a LONG strategy (side must include 'LONG')");
+      if (def.stop.kind === "ABOVE_SWING" && !sides.has("SHORT")) errors.push("stop ABOVE_SWING only makes sense for a SHORT strategy (side must include 'SHORT')");
+      break;
+    case "BELOW_SIGNAL_LOW":
+    case "ABOVE_SIGNAL_HIGH":
+      if (!Number.isFinite(def.stop.bufferPct) || def.stop.bufferPct < 0) errors.push("stop.bufferPct must be a non-negative finite number");
+      if (def.stop.kind === "BELOW_SIGNAL_LOW" && !sides.has("LONG")) errors.push("stop BELOW_SIGNAL_LOW only makes sense for a LONG strategy (side must include 'LONG')");
+      if (def.stop.kind === "ABOVE_SIGNAL_HIGH" && !sides.has("SHORT")) errors.push("stop ABOVE_SIGNAL_HIGH only makes sense for a SHORT strategy (side must include 'SHORT')");
+      break;
+    default:
+      errors.push("stop: unknown kind");
   }
 
-  if (def.target.kind === "R_MULTIPLE") {
-    if (!Number.isFinite(def.target.multiple) || def.target.multiple <= 0) errors.push("target.multiple must be a positive finite number");
-  } else if (def.target.kind === "FIXED_PCT") {
-    if (!Number.isFinite(def.target.pct) || def.target.pct <= 0) errors.push("target.pct must be a positive finite number");
-  } else {
-    errors.push("target: unknown kind");
+  switch (def.target.kind) {
+    case "R_MULTIPLE":
+      if (!Number.isFinite(def.target.multiple) || def.target.multiple <= 0) errors.push("target.multiple must be a positive finite number");
+      break;
+    case "FIXED_PERCENT":
+      if (!Number.isFinite(def.target.pct) || def.target.pct <= 0) errors.push("target.pct must be a positive finite number");
+      break;
+    case "NEXT_SWING":
+      checkPeriod(def.target.leftRightBars, errors, "target.leftRightBars");
+      break;
+    case "NEXT_LIQUIDITY_POOL":
+      checkPeriod(def.target.leftRightBars, errors, "target.leftRightBars");
+      checkPeriod(def.target.atrPeriod, errors, "target.atrPeriod");
+      if (!Number.isFinite(def.target.equalHighLowAtrMultiple) || def.target.equalHighLowAtrMultiple <= 0) {
+        errors.push("target.equalHighLowAtrMultiple must be a positive finite number");
+      }
+      break;
+    default:
+      errors.push("target: unknown kind");
   }
 
   return errors.length === 0 ? { ok: true } : { ok: false, errors };

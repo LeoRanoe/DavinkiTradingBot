@@ -1,6 +1,15 @@
 import { ema } from "@/lib/indicators/ema";
 import { sma } from "@/lib/indicators/sma";
 import { rsi } from "@/lib/indicators/rsi";
+import { atr } from "@/lib/indicators/atr";
+import { JEANFX_V1_PARAMS } from "@/lib/strategy/jeanfx-v1/config";
+import { detectSwingHighs, detectSwingLows, latestSwingHigh, latestSwingLow, swingHighSeries, swingLowSeries } from "@/lib/strategy/jeanfx-v1/primitives/swings";
+import { findEqualHighs, findEqualLows } from "@/lib/strategy/jeanfx-v1/primitives/equal-levels";
+import { poolsFromEqualLevels, poolsFromUnclusteredSwings } from "@/lib/strategy/jeanfx-v1/primitives/liquidity";
+import { detectSweep } from "@/lib/strategy/jeanfx-v1/primitives/sweep";
+import { breaksStructure } from "@/lib/strategy/jeanfx-v1/primitives/structure";
+import { detectFvgAt } from "@/lib/strategy/jeanfx-v1/primitives/fvg";
+import { isBearishCandle, isBearishEngulfing, isBullishCandle, isBullishEngulfing, isHammer, isShootingStar } from "@/lib/strategy/jeanfx-v1/primitives/candles";
 import type { CanonicalCandle, Timeframe, TradingSession } from "../types";
 import type { DslDefinition, DslEvalResult, DslNode } from "./types";
 
@@ -73,6 +82,12 @@ function evaluateSeries(node: DslNode, candles: CanonicalCandle[]): DslEvalResul
       if (!src.ok) return src;
       return ok(rollingExtreme(src.value, node.period, "min"));
     }
+    case "ATR":
+      return ok(atr(candles, node.period));
+    case "SWING_HIGH":
+      return ok(swingHighSeries(candles, node.leftRightBars));
+    case "SWING_LOW":
+      return ok(swingLowSeries(candles, node.leftRightBars));
     default:
       return err(`'${node.type}' does not produce a value series`);
   }
@@ -164,6 +179,43 @@ function evaluateCondition(node: DslNode, ctx: ConditionCtx): DslEvalResult<bool
       const pct = ((now - then) / Math.abs(then)) * 100;
       if (!Number.isFinite(pct)) return err("NON_FINITE_VALUE");
       return ok(node.comparator === "GT" ? pct > node.valuePct : pct < node.valuePct);
+    }
+    case "BULLISH_CANDLE":
+      return ok(isBullishCandle(ctx.candles[index]));
+    case "BEARISH_CANDLE":
+      return ok(isBearishCandle(ctx.candles[index]));
+    case "CANDLE_PATTERN": {
+      const current = ctx.candles[index];
+      const prior = index > 0 ? ctx.candles[index - 1] : null;
+      const params = JEANFX_V1_PARAMS.confirmation;
+      switch (node.pattern) {
+        case "BULLISH_ENGULFING":
+          return ok(prior !== null && isBullishEngulfing(prior, current));
+        case "BEARISH_ENGULFING":
+          return ok(prior !== null && isBearishEngulfing(prior, current));
+        case "HAMMER":
+          return ok(isHammer(current, params));
+        case "SHOOTING_STAR":
+          return ok(isShootingStar(current, params));
+      }
+      return err("UNKNOWN_CANDLE_PATTERN");
+    }
+    case "BOS": {
+      const priorCandles = ctx.candles.slice(0, index);
+      const requiredSwing = node.direction === "LONG" ? latestSwingHigh(priorCandles, node.leftRightBars) : latestSwingLow(priorCandles, node.leftRightBars);
+      if (!requiredSwing) return err("INSUFFICIENT_HISTORY");
+      return ok(breaksStructure(ctx.candles[index], node.direction, requiredSwing));
+    }
+    case "LIQUIDITY_SWEEP": {
+      const upTo = ctx.candles.slice(0, index + 1);
+      const swings = node.side === "BUY_SIDE" ? detectSwingHighs(upTo, node.leftRightBars) : detectSwingLows(upTo, node.leftRightBars);
+      const clusters = node.side === "BUY_SIDE" ? findEqualHighs(upTo, swings, node.equalHighLowAtrMultiple, node.atrPeriod) : findEqualLows(upTo, swings, node.equalHighLowAtrMultiple, node.atrPeriod);
+      const pools = [...poolsFromEqualLevels(clusters), ...poolsFromUnclusteredSwings(swings, clusters, node.side)];
+      return ok(detectSweep(upTo, index, pools) !== null);
+    }
+    case "FVG": {
+      const fvg = detectFvgAt(ctx.candles, index);
+      return ok(fvg !== null && fvg.direction === node.direction);
     }
     default:
       return err(`'${node.type}' does not produce a condition`);

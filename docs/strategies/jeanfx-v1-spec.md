@@ -1,11 +1,20 @@
-# JeanFX v1 — Formal Specification (Checkpoint)
+# JeanFX v1 — Formal Specification
 
 **Status: RESEARCH_ONLY. Not PAPER_APPROVED. Not LIVE_APPROVED.**
 
-This document is the specification checkpoint requested for the JeanFX
-pivot. It does not ship a backtest and does not change V1 or promotion
-status of anything. See `TASKS.md` / `docs/BUILD_STATE.md` for where this
-sits in the overall build.
+**Implementation status (Prompt 2): the state machine, all primitives, and
+the DSL wiring described below are now implemented** -
+`lib/strategy/jeanfx-v1/` (primitives + `state-machine.ts`), wired into the
+generic contract at `lib/strategy-platform/built-in/jeanfx-v1.ts`. This
+document was written as a spec-first checkpoint (Prompt 1) before any of
+that code existed; it is now kept as the living source of truth for every
+SOURCE RULE / IMPLEMENTATION ASSUMPTION distinction the code implements -
+every assumption listed below is locked exactly as written, none were
+silently changed during implementation. See
+`docs/architecture/strategy-platform.md` for how this fits the wider
+multi-strategy platform. It still does not ship a profitability claim or
+change V1's promotion status. See `TASKS.md` / `docs/BUILD_STATE.md` for
+where this sits in the overall build.
 
 ## 0. Source-of-truth caveat (read this first)
 
@@ -24,17 +33,21 @@ proposing for review, per instruction not to silently finalize thresholds.
 If an actual JeanFX source document exists, it should be supplied and this
 spec re-checked against it before any of these assumptions are locked.
 
-## 1. Scope of this checkpoint
+## 1. Scope
 
-- Formal, deterministic specification only.
-- Pure TypeScript types/skeletons for the domain model (`Instrument`,
-  `CanonicalCandle`, `TradingSession`, liquidity/structure primitives).
-- No backtest run. No profitability claim. No PAPER/LIVE change.
+- Prompt 1: formal, deterministic specification + pure domain types only.
+- Prompt 2: full implementation (primitives, state machine, generic
+  contract wiring, DSL primitive sharing) - see the "Files" section below.
+  `runGenericBacktest()` (`lib/strategy-platform/backtest.ts`) CAN run
+  JeanFX now, through the same engine as any other strategy - but no
+  profitability claim is made anywhere in this document or the code; that
+  is a promotion-review question (§16), not a backtest-day one.
+- No PAPER/LIVE change, in either prompt.
 - V1 (`lib/strategy/v1/`) is untouched.
-- V2/TRB: not present in this repository as a distinct code path today
-  (no `lib/strategy/v2` or TRB module was found). Nothing here touches
-  strategy code outside the new `lib/strategy/jeanfx-v1/` directory, so
-  there is nothing to disturb.
+- V2/TRB: not present in this repository as a distinct code path (no
+  `lib/strategy/v2` or TRB module was found) - registered as an honest
+  placeholder in the built-in registry
+  (`lib/strategy-platform/built-in/trb.ts`), nothing more.
 
 ## 2. Strategy identity
 
@@ -192,48 +205,56 @@ price from the entry, in the trade's direction — see §12.
 
 ## 6. Bullish state machine
 
+**As implemented** (`lib/strategy/jeanfx-v1/state-machine.ts`, states named
+per `JeanfxStateName` in `types.ts` — renamed from this document's
+original `S0_IDLE..S9_NO_TRADE` placeholders to the more descriptive names
+below during implementation; the sequence and every gating rule are
+unchanged):
+
 ```
-S0_IDLE
-  -> S1_HTF_BIAS_BULLISH        [H1/M30: bias == BULLISH]
-  -> S2_SELLSIDE_LIQUIDITY_ID   [sell-side pool identified below/at range]
-  -> S3_SWEEP_CONFIRMED         [closed candle sweeps the sell-side pool, §5.4]
-  -> S4_BULLISH_MSS_CONFIRMED   [closed M15 candle breaks prior swing high
-                                  after the sweep, per §5.5]
-  -> S5_BULLISH_FVG_FORMED      [3-candle bullish FVG, §5.6, inside the
-                                  displacement leg that produced S4]
-  -> S6_RETRACED_INTO_FVG       [M5 close trades back into the FVG range]
-  -> S7_CONFIRMATION_CANDLE     [valid bullish confirmation pattern, §7,
-                                  closes inside/at the FVG]
-  -> S8_LONG_SETUP_VALID        [target liquidity exists with R:R >= 3, §12;
-                                  else -> S9_NO_TRADE]
-  -> S9_NO_TRADE                [terminal; any missing precondition lands
-                                  here, never a partial entry]
+WAITING_FOR_BIAS
+  -> WAITING_FOR_LIQUIDITY_SWEEP        [H1/M30: bias == BULLISH]
+  -> WAITING_FOR_STRUCTURE_CONFIRMATION [closed candle sweeps a sell-side
+                                          pool, §5.4]
+  -> WAITING_FOR_FVG                    [closed M15 candle breaks the swing
+                                          high nearest the sweep - MSS, §5.5]
+  -> WAITING_FOR_RETRACE                [3-candle bullish FVG, §5.6, inside
+                                          the displacement leg that produced
+                                          the MSS]
+  -> WAITING_FOR_CONFIRMATION           [M5 close trades back into the FVG
+                                          range]
+  -> READY                              [valid bullish confirmation pattern,
+                                          §8, AND target liquidity exists
+                                          with R:R >= 3, §12]
+  -> INVALIDATED                        [terminal for this attempt; any
+                                          missing precondition lands here,
+                                          never a partial entry - see §15]
 ```
 
 Enforcement rule (brief, verbatim intent): **no state may be entered out
-of order.** A bearish MSS after S3 does not "downgrade" into a long setup
-— it resets to `S0_IDLE` for that HTF-bias direction. A FVG seen with no
-prior sweep+MSS (`S2`→`S5` skipping `S3`/`S4`) is not a valid setup:
-**no sweep-only entry, no FVG-only entry, no confirmation-before-BOS.**
-Any state can expire (§10) and revert to `S0_IDLE`.
+of order.** A FVG seen with no prior sweep+MSS is not a valid setup: **no
+sweep-only entry, no FVG-only entry, no confirmation-before-BOS.** Every
+transition is logged with a reason code, timestamp, and price level
+(`JeanfxStateTransition`) - never a bare state change. On timeout or
+invalidation the walk resets to `WAITING_FOR_LIQUIDITY_SWEEP` and keeps
+hunting within the same evaluation, rather than permanently giving up -
+see "New implementation-only assumptions" below for the timeout bounds.
+
+**Implementation design note (not a source rule):** rather than persisting
+engine state between calls, `runJeanfxDirection()` DERIVES the state by
+walking the full closed-candle history once per evaluation. Given the same
+candle history this always reproduces the same trajectory - exactly as
+deterministic as literal persisted state, without needing engine-state
+storage. See `docs/architecture/strategy-platform.md`.
 
 ## 7. Bearish state machine (mirror)
 
-```
-S0_IDLE
-  -> S1_HTF_BIAS_BEARISH
-  -> S2_BUYSIDE_LIQUIDITY_ID
-  -> S3_SWEEP_CONFIRMED         [sweep of buy-side pool]
-  -> S4_BEARISH_MSS_CONFIRMED   [M15 close breaks prior swing low]
-  -> S5_BEARISH_FVG_FORMED      [3-candle bearish FVG]
-  -> S6_RETRACED_INTO_FVG
-  -> S7_CONFIRMATION_CANDLE     [valid bearish confirmation pattern]
-  -> S8_SHORT_SETUP_VALID       [target liquidity R:R >= 3, else S9_NO_TRADE]
-  -> S9_NO_TRADE
-```
-
-Same ordering enforcement as §6. `S8_SHORT_SETUP_VALID` is a research-only
-output — see §4: it is never forwarded to Bybit spot execution.
+Same states and same function (`runJeanfxDirection(..., "SHORT", ...)`),
+mirrored: `WAITING_FOR_LIQUIDITY_SWEEP` hunts a **buy-side** sweep,
+`WAITING_FOR_FVG` requires the swing **low** nearest the sweep to break
+(MSS), and the FVG/confirmation/target are bearish. Same ordering
+enforcement as §6. `READY` on a SHORT walk is a research-only output — see
+§4: it is never forwarded to Bybit spot execution.
 
 ## 8. Candle confirmation patterns (entry timeframe, closed candles only)
 
@@ -296,7 +317,14 @@ introduced later as silent post-hoc optimization (instruction §10).
 
 FVG invalidation: if price closes fully through the far edge of the FVG
 without producing a valid confirmation candle, the setup reverts to
-`S9_NO_TRADE` — the FVG is not "reused" on a second touch.
+`INVALIDATED` — the FVG is not "reused" on a second touch. **As
+implemented, the entry-timeframe scan for retracement+confirmation has no
+bar-count timeout** (unlike the structure-timeframe MSS/FVG stages, §
+below) - it keeps scanning every M5 candle supplied until invalidation or
+READY. This is a noted limitation, not a silent design decision: an
+unbounded wait could in principle let a very old, stale FVG still trigger;
+adding a symmetric entry-timeframe timeout is flagged for future review
+rather than guessed at here.
 
 ## 11. Stop loss model
 
@@ -341,9 +369,44 @@ applied to JeanFX's own target logic.
   sessions are disabled).
 - Sizing reuses the existing deterministic risk engine
   (`lib/risk/position-sizing.ts`, `lib/risk/engine.ts`) rather than a new
-  parallel implementation — JeanFX supplies `entry`/`stop`/`target`/
-  `riskPct`, the existing engine still owns min-order-vs-stop conflict
-  handling (`MIN_ORDER_RISK_CONFLICT`, CLAUDE.md §4) unchanged.
+  parallel implementation for the LONG side — JeanFX supplies
+  `entry`/`stop`/`target`/`riskPct`, the existing engine still owns
+  min-order-vs-stop conflict handling (`MIN_ORDER_RISK_CONFLICT`, CLAUDE.md
+  §4) unchanged. For SHORT (research-only, never executable in this build),
+  the generic backtest engine (`lib/strategy-platform/backtest.ts`) uses a
+  separate, symmetric, clearly-labeled research-only mirror of the same
+  formulas rather than modifying the production (intentionally long-only)
+  risk engine - see that file's header comment.
+
+### New implementation-only assumptions (added during Prompt 2, not in the original brief)
+
+- `mssTimeoutBars = 20` and `fvgTimeoutBars = 20` (structure-timeframe, M15
+  bars): how long a setup waits in `WAITING_FOR_STRUCTURE_CONFIRMATION` /
+  `WAITING_FOR_FVG` before giving up on that attempt and resuming the hunt
+  for a fresh sweep. The brief gives no bound; without one a stale sweep
+  from days ago could still "count" indefinitely.
+- HTF bias determination itself (`determineHtfBias()`,
+  `state-machine.ts`): `EMA50 > EMA200 AND close > EMA50` (bullish; mirror
+  for bearish). The brief never specifies how bias is computed at all -
+  this reuses the same well-known trend test V1 uses conceptually, as an
+  independent JeanFX-owned copy, not a shared function with V1.
+
+### User-configurable parameters (Prompt 2 S6) vs version-locked assumptions
+
+Per instruction, only a small surface is user-tunable
+(`lib/strategy/jeanfx-v1/config.ts` `JeanfxUserConfig`,
+`validateJeanfxUserConfig()`) — everything else above (swing bars, equal-
+level tolerance, displacement multiple, stop buffer, confirmation wick
+ratios, the two new timeouts) stays locked to the immutable `jeanfx-v1`
+version, so a user can never quietly overfit JeanFX into a different
+strategy while still calling it "JeanFX":
+
+| Parameter | Choices | Default |
+|---|---|---|
+| `biasTimeframe` | `H1` \| `M30` | `H1` |
+| `riskPct` | `(0, 0.05]` | `0.01` |
+| `sessionFilter` | `LONDON` \| `NEW_YORK` \| `LONDON_AND_NEW_YORK` \| `ALL` | `ALL` (no session gating) |
+| `confirmationPatterns` | `ENGULFING` \| `HAMMER_SHOOTING_STAR` \| `BOTH` | `BOTH` |
 
 ## 14. Partial profit + break-even — unresolved source ambiguity
 
@@ -361,25 +424,39 @@ testing.
 
 ## 15. No-trade conditions (exhaustive)
 
-A setup resolves to `NO_TRADE` (never a degraded entry) whenever:
-1. HTF bias is neutral/undetermined (§3).
+A setup resolves to `INVALIDATED` (or simply never leaves
+`WAITING_FOR_*`) — never a degraded entry — whenever:
+1. HTF bias is neutral/undetermined (§3) — stays at `WAITING_FOR_BIAS`.
 2. No identifiable liquidity pool exists ahead of price in the bias
-   direction.
-3. No sweep occurs (state never reaches `S3`).
-4. Sweep occurs but no MSS/BOS confirms afterward (§5.5) — sweep-only,
-   rejected by design.
-5. MSS/BOS confirms but no FVG forms in the displacement leg (§5.7) —
-   confirmation-before-BOS / no-FVG, rejected by design.
+   direction — stays at `WAITING_FOR_LIQUIDITY_SWEEP`.
+3. No sweep occurs (state never leaves `WAITING_FOR_LIQUIDITY_SWEEP`).
+4. Sweep occurs but no MSS confirms afterward within `mssTimeoutBars`
+   (§5.5) — sweep-only, rejected by design, resets to hunting.
+5. MSS confirms but no FVG forms in the displacement leg within
+   `fvgTimeoutBars` (§5.7) — confirmation-before-BOS / no-FVG, rejected by
+   design, resets to hunting.
 6. FVG forms but price never retraces into it, or invalidates it first
-   (§10).
-7. Retracement occurs but no valid confirmation candle (§7) forms.
+   (§10) — `INVALIDATED` with reason code `FVG_INVALIDATED`.
+7. Retracement occurs but no valid confirmation candle (§8) forms — walk
+   ends at `WAITING_FOR_CONFIRMATION`.
 8. Confirmation candle forms but no unswept target liquidity yields
-   R:R >= 3.0 (§12).
-9. Max trades for the session/day already reached (§13).
-10. `sessionFilter` is enabled and the current instant is outside all
-    configured sessions.
+   R:R >= 3.0 (§12) — `INVALIDATED` with reason code `NO_VALID_TARGET_RR`.
+9. Max trades for the session/day already reached (§13) — **not yet
+   enforced anywhere in this checkpoint**, honestly flagged rather than
+   claimed: `maxTradesPerSession` is defined in `JEANFX_V1_PARAMS` but no
+   caller (the built-in wiring, the generic backtest engine) currently
+   tracks trades-per-session for JeanFX specifically. This is a real gap,
+   not a design choice - it needs to be wired into whichever caller
+   ultimately runs JeanFX repeatedly over time (a scan job or backtest
+   loop) before promotion review.
+10. `sessionFilter` is enabled and the confirmation candle's instant is
+    outside all configured sessions — `INVALIDATED` with reason code
+    `OUTSIDE_SESSION` (checked once, at the moment of readiness, not
+    throughout the whole walk).
 11. Any input candle in the required window is not closed (closed-candle
-    invariant, CLAUDE.md §3) — mirrors V1 exactly.
+    invariant, CLAUDE.md §3) — mirrors V1 exactly; enforced by the caller
+    (`lib/strategy-platform/built-in/jeanfx-v1.ts`) filtering every
+    timeframe to `isClosed` candles before the state machine ever sees them.
 
 ## 16. Promotion bar (restated, not new)
 
@@ -441,20 +518,43 @@ unless `sessionFilter` is explicitly enabled and tested for that market.
 | `maxOppositeWickRatio` | 0.5 | assumption |
 | `rrMinimum` | 3.0 | sourced ("minimum 1:3") |
 | `riskPct` | 0.01 | sourced (normalized lock value) |
-| `maxTradesPerSession` | 3 | sourced |
+| `maxTradesPerSession` | 3 | sourced (**not yet enforced** - see §15.9) |
 | Session windows (§9) | see §9 | assumption |
+| `mssTimeoutBars` | 20 | assumption (new, Prompt 2) |
+| `fvgTimeoutBars` | 20 | assumption (new, Prompt 2) |
 
-## Files created in this checkpoint
+## Files (spec-checkpoint types, Prompt 1, and implementation, Prompt 2)
 
+Prompt 1 (spec + types only):
 - `docs/strategies/jeanfx-v1-spec.md` (this file).
 - `lib/strategy/jeanfx-v1/types.ts` — pure domain types (`Direction`,
-  `Instrument`, `CanonicalCandle`, `TradingSession`, `LiquidityPool`,
-  `FairValueGap`, `StructureEvent`, state-machine state union, etc.)
+  `Instrument`, `CanonicalCandle`, `LiquidityPool`, `FairValueGap`,
+  `StructureEvent`, `JeanfxStateName`, `JeanfxStateTransition`, etc.) - now
+  also re-exports `Direction`/`CanonicalCandle`/etc. from
+  `lib/strategy-platform/types.ts` rather than duplicating them, tidied up
+  during Prompt 2 to avoid two competing definitions of the same shape.
 - `lib/strategy/jeanfx-v1/config.ts` — `JEANFX_V1_PARAMS`, versioned like
-  V1's `STRATEGY_V1_PARAMS`, holding every proposed numeric threshold
-  above, plus `JEANFX_V1_VERSION_LABEL = "jeanfx-v1"` and
-  `JEANFX_V1_STATUS = "RESEARCH_ONLY"`.
-- No strategy logic (swing/sweep/MSS/FVG detection, the state machine
-  itself, sizing wiring) is implemented yet — this checkpoint is
-  intentionally spec + types only, per instruction not to build a large
-  backtest before the spec is reviewed.
+  V1's `STRATEGY_V1_PARAMS`.
+
+Prompt 2 (implementation):
+- `lib/strategy/jeanfx-v1/primitives/` — `swings.ts`, `equal-levels.ts`,
+  `sweep.ts`, `structure.ts` (BOS/MSS), `fvg.ts`, `candles.ts` (engulfing/
+  hammer/shooting-star), `sessions.ts` (DST-aware), `liquidity.ts` (pool
+  assembly) - each with its own test file. These are the SAME functions
+  the DSL's structure primitives (`SWING_HIGH`/`BOS`/`LIQUIDITY_SWEEP`/
+  `FVG`/`CANDLE_PATTERN`) delegate to (`lib/strategy-platform/dsl/
+  evaluate.ts`) - see docs/architecture/strategy-platform.md "DSL
+  primitive library expansion". Not reimplemented twice.
+- `lib/strategy/jeanfx-v1/state-machine.ts` — `runJeanfxDirection()`, the
+  two-phase (structure-timeframe walk, then entry-timeframe scan) walk
+  described in §6/§7, plus `determineHtfBias()`.
+- `lib/strategy/jeanfx-v1/state-machine.test.ts` — LONG/SHORT (mirrored),
+  bias mismatch, flat-market no-signal, FVG invalidation, no-valid-target
+  invalidation, and no-lookahead (an appended absurd future candle proven
+  to have zero effect on an already-reached READY result).
+- `lib/strategy-platform/built-in/jeanfx-v1.ts` — wires the state machine
+  into the generic `StrategyContract`; the ONLY place JeanFX-specific code
+  touches the platform layer. No JeanFX logic anywhere in
+  `lib/strategy-platform/backtest.ts`, `lib/risk/`, or `lib/trading/`.
+  `config.ts` also gained `JeanfxUserConfig`/`validateJeanfxUserConfig()`
+  for the small user-tunable surface (§ above).

@@ -111,7 +111,7 @@ describe("DSL evaluate - safety guards", () => {
       timeframes: ["M15"],
       side: ["LONG"],
       entry: { type: "COMPARE", comparator: "GT", left: { type: "PRICE", field: "close" }, right: { type: "CONST", value: 500 } },
-      stop: { kind: "FIXED_PCT", pct: 0.01 },
+      stop: { kind: "FIXED_PERCENT", pct: 0.01 },
       target: { kind: "R_MULTIPLE", multiple: 2 },
       parameterSchema: {},
     };
@@ -120,13 +120,96 @@ describe("DSL evaluate - safety guards", () => {
     expect(result).toEqual({ ok: true, value: false });
   });
 
+});
+
+describe("DSL evaluate - structure primitives (shared with JeanFX, not reimplemented)", () => {
+  it("ATR delegates to lib/indicators/atr", () => {
+    const candles = series([100, 101, 99, 102, 98, 103, 97, 104, 96, 105, 95, 106, 94, 107, 93, 108]);
+    const result = evaluateSeries({ type: "ATR", period: 14 }, candles);
+    expect(result.ok).toBe(true);
+  });
+
+  it("SWING_HIGH/SWING_LOW forward-fill from the same swing detector JeanFX uses", () => {
+    const candles = [
+      candle({ openTime: 0, high: 101, low: 99 }),
+      candle({ openTime: 1, high: 105, low: 103 }),
+      candle({ openTime: 2, high: 110, low: 108 }), // swing high @ 110
+      candle({ openTime: 3, high: 105, low: 103 }),
+      candle({ openTime: 4, high: 101, low: 99 }),
+    ];
+    const highest = evaluateSeries({ type: "SWING_HIGH", leftRightBars: 2 }, candles);
+    expect(highest).toEqual({ ok: true, value: [NaN, NaN, NaN, NaN, 110] });
+  });
+
+  it("BULLISH_CANDLE/BEARISH_CANDLE read the latest candle's direction", () => {
+    const bullish = [candle({ openTime: 0, open: 100, close: 105 })];
+    const bearish = [candle({ openTime: 0, open: 105, close: 100 })];
+    expect(evaluateCondition({ type: "BULLISH_CANDLE" }, { candles: bullish, marketSession: null })).toEqual({ ok: true, value: true });
+    expect(evaluateCondition({ type: "BEARISH_CANDLE" }, { candles: bearish, marketSession: null })).toEqual({ ok: true, value: true });
+  });
+
+  it("CANDLE_PATTERN detects bullish engulfing using the prior candle", () => {
+    const candles = [
+      candle({ openTime: 0, open: 100, close: 95, high: 101, low: 94 }),
+      candle({ openTime: 1, open: 94, close: 102, high: 103, low: 93 }),
+    ];
+    const result = evaluateCondition({ type: "CANDLE_PATTERN", pattern: "BULLISH_ENGULFING" }, { candles, marketSession: null });
+    expect(result).toEqual({ ok: true, value: true });
+  });
+
+  it("CANDLE_PATTERN detects a hammer using the shared confirmation params", () => {
+    const candles = [candle({ openTime: 0, open: 100, close: 101, high: 101.2, low: 95 })];
+    expect(evaluateCondition({ type: "CANDLE_PATTERN", pattern: "HAMMER" }, { candles, marketSession: null })).toEqual({ ok: true, value: true });
+  });
+
+  it("FVG detects the exact brief definition on the latest 3-candle window", () => {
+    const candles = [
+      candle({ openTime: 0, high: 100, low: 98 }),
+      candle({ openTime: 1, high: 105, low: 101 }),
+      candle({ openTime: 2, high: 110, low: 103 }), // low(103) > high[c1](100) => bullish FVG
+    ];
+    expect(evaluateCondition({ type: "FVG", direction: "LONG" }, { candles, marketSession: null })).toEqual({ ok: true, value: true });
+    expect(evaluateCondition({ type: "FVG", direction: "SHORT" }, { candles, marketSession: null })).toEqual({ ok: true, value: false });
+  });
+
+  it("BOS fires exactly when the latest candle closes beyond the prior confirmed swing", () => {
+    const candles = [
+      candle({ openTime: 0, high: 101, low: 99 }),
+      candle({ openTime: 1, high: 105, low: 103 }),
+      candle({ openTime: 2, high: 110, low: 108 }), // swing high @ 110, confirmed by openTime 4
+      candle({ openTime: 3, high: 105, low: 103 }),
+      candle({ openTime: 4, high: 101, low: 99 }),
+      candle({ openTime: 5, open: 100, close: 112, high: 113, low: 99 }), // closes above 110
+    ];
+    const result = evaluateCondition({ type: "BOS", direction: "LONG", leftRightBars: 2 }, { candles, marketSession: null });
+    expect(result).toEqual({ ok: true, value: true });
+  });
+
+  it("LIQUIDITY_SWEEP fires exactly on the brief's sweep definition, using the shared sweep detector", () => {
+    const candles = [
+      candle({ openTime: 0, high: 101, low: 99 }),
+      candle({ openTime: 1, high: 97, low: 95 }),
+      candle({ openTime: 2, high: 92, low: 90 }), // swing low @ 90
+      candle({ openTime: 3, high: 97, low: 95 }),
+      candle({ openTime: 4, high: 101, low: 99 }),
+      candle({ openTime: 5, open: 95, high: 96, low: 85, close: 91 }), // trades below 90, closes back above
+    ];
+    const result = evaluateCondition(
+      { type: "LIQUIDITY_SWEEP", side: "SELL_SIDE", leftRightBars: 2, equalHighLowAtrMultiple: 0.1, atrPeriod: 14 },
+      { candles, marketSession: null },
+    );
+    expect(result).toEqual({ ok: true, value: true });
+  });
+});
+
+describe("DSL evaluate - safety guards (missing data)", () => {
   it("returns MISSING_MARKET_DATA rather than crashing on no candles", () => {
     const def: DslDefinition = {
       engineSchemaVersion: "1",
       timeframes: ["M15"],
       side: ["LONG"],
       entry: { type: "SESSION", sessions: ["ASIA"] },
-      stop: { kind: "FIXED_PCT", pct: 0.01 },
+      stop: { kind: "FIXED_PERCENT", pct: 0.01 },
       target: { kind: "R_MULTIPLE", multiple: 2 },
       parameterSchema: {},
     };
