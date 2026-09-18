@@ -453,6 +453,130 @@ export type Database = {
         }
         Relationships: []
       }
+      instrument_research_eligibility: {
+        Row: {
+          checked_at: string | null
+          created_at: string
+          instrument_id: string
+          metrics: Json
+          reasons: string[]
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          checked_at?: string | null
+          created_at?: string
+          instrument_id: string
+          metrics?: Json
+          reasons?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          checked_at?: string | null
+          created_at?: string
+          instrument_id?: string
+          metrics?: Json
+          reasons?: string[]
+          status?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instrument_research_eligibility_instrument_id_fkey"
+            columns: ["instrument_id"]
+            isOneToOne: true
+            referencedRelation: "instruments"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      instruments: {
+        Row: {
+          allows_long: boolean
+          allows_short: boolean
+          asset_class: string
+          base_asset: string
+          canonical_id: string
+          contract_multiplier: number | null
+          created_at: string
+          id: string
+          is_active: boolean
+          lot_size: number | null
+          max_size: number | null
+          metadata: Json
+          min_notional: number | null
+          min_size: number | null
+          pip_size: number | null
+          price_increment: number | null
+          quote_asset: string
+          settlement_asset: string
+          size_increment: number | null
+          trading_calendar: string
+          updated_at: string
+          venue_id: string
+          venue_symbol: string
+        }
+        Insert: {
+          allows_long?: boolean
+          allows_short?: boolean
+          asset_class: string
+          base_asset: string
+          canonical_id: string
+          contract_multiplier?: number | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          lot_size?: number | null
+          max_size?: number | null
+          metadata?: Json
+          min_notional?: number | null
+          min_size?: number | null
+          pip_size?: number | null
+          price_increment?: number | null
+          quote_asset: string
+          settlement_asset: string
+          size_increment?: number | null
+          trading_calendar?: string
+          updated_at?: string
+          venue_id: string
+          venue_symbol: string
+        }
+        Update: {
+          allows_long?: boolean
+          allows_short?: boolean
+          asset_class?: string
+          base_asset?: string
+          canonical_id?: string
+          contract_multiplier?: number | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          lot_size?: number | null
+          max_size?: number | null
+          metadata?: Json
+          min_notional?: number | null
+          min_size?: number | null
+          pip_size?: number | null
+          price_increment?: number | null
+          quote_asset?: string
+          settlement_asset?: string
+          size_increment?: number | null
+          trading_calendar?: string
+          updated_at?: string
+          venue_id?: string
+          venue_symbol?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "instruments_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integration_credentials: {
         Row: {
           config: Json
@@ -1309,6 +1433,162 @@ export type Database = {
           },
         ]
       }
+      strategy_assignments: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          id: string
+          instrument_ids: string[]
+          mode: Database["public"]["Enums"]["strategy_assignment_mode"]
+          paper_authorized_at: string | null
+          paper_authorized_by: string | null
+          priority: number
+          strategy_configuration_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          instrument_ids?: string[]
+          mode?: Database["public"]["Enums"]["strategy_assignment_mode"]
+          paper_authorized_at?: string | null
+          paper_authorized_by?: string | null
+          priority?: number
+          strategy_configuration_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          instrument_ids?: string[]
+          mode?: Database["public"]["Enums"]["strategy_assignment_mode"]
+          paper_authorized_at?: string | null
+          paper_authorized_by?: string | null
+          priority?: number
+          strategy_configuration_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategy_assignments_paper_authorized_by_fkey"
+            columns: ["paper_authorized_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategy_assignments_strategy_configuration_id_fkey"
+            columns: ["strategy_configuration_id"]
+            isOneToOne: false
+            referencedRelation: "strategy_configurations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategy_assignments_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      strategy_configurations: {
+        Row: {
+          created_at: string
+          enabled: boolean
+          id: string
+          name: string
+          parameters: Json
+          strategy_version_id: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          name: string
+          parameters?: Json
+          strategy_version_id: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          name?: string
+          parameters?: Json
+          strategy_version_id?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategy_configurations_strategy_version_id_fkey"
+            columns: ["strategy_version_id"]
+            isOneToOne: false
+            referencedRelation: "strategy_platform_versions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategy_configurations_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      strategy_definitions: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          description: string | null
+          display_name: string
+          id: string
+          owner_user_id: string | null
+          slug: string
+          type: Database["public"]["Enums"]["strategy_definition_type"]
+          visibility: Database["public"]["Enums"]["strategy_visibility"]
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          description?: string | null
+          display_name: string
+          id?: string
+          owner_user_id?: string | null
+          slug: string
+          type: Database["public"]["Enums"]["strategy_definition_type"]
+          visibility?: Database["public"]["Enums"]["strategy_visibility"]
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          description?: string | null
+          display_name?: string
+          id?: string
+          owner_user_id?: string | null
+          slug?: string
+          type?: Database["public"]["Enums"]["strategy_definition_type"]
+          visibility?: Database["public"]["Enums"]["strategy_visibility"]
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategy_definitions_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       strategy_experiments: {
         Row: {
           base_strategy_version_id: string
@@ -1404,6 +1684,60 @@ export type Database = {
             columns: ["strategy_version_id"]
             isOneToOne: false
             referencedRelation: "strategy_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      strategy_platform_versions: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          created_by: string | null
+          definition: Json
+          engine_schema_version: string
+          id: string
+          status: Database["public"]["Enums"]["strategy_platform_status"]
+          strategy_definition_id: string
+          version_label: string
+          version_number: number
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          definition: Json
+          engine_schema_version?: string
+          id?: string
+          status?: Database["public"]["Enums"]["strategy_platform_status"]
+          strategy_definition_id: string
+          version_label: string
+          version_number: number
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          definition?: Json
+          engine_schema_version?: string
+          id?: string
+          status?: Database["public"]["Enums"]["strategy_platform_status"]
+          strategy_definition_id?: string
+          version_label?: string
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "strategy_platform_versions_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "strategy_platform_versions_strategy_definition_id_fkey"
+            columns: ["strategy_definition_id"]
+            isOneToOne: false
+            referencedRelation: "strategy_definitions"
             referencedColumns: ["id"]
           },
         ]
@@ -1730,6 +2064,125 @@ export type Database = {
           },
         ]
       }
+      universe_members: {
+        Row: {
+          added_at: string
+          id: string
+          instrument_id: string
+          paper_enabled: boolean
+          research_enabled: boolean
+          shadow_enabled: boolean
+          universe_id: string
+          updated_at: string
+        }
+        Insert: {
+          added_at?: string
+          id?: string
+          instrument_id: string
+          paper_enabled?: boolean
+          research_enabled?: boolean
+          shadow_enabled?: boolean
+          universe_id: string
+          updated_at?: string
+        }
+        Update: {
+          added_at?: string
+          id?: string
+          instrument_id?: string
+          paper_enabled?: boolean
+          research_enabled?: boolean
+          shadow_enabled?: boolean
+          universe_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "universe_members_instrument_id_fkey"
+            columns: ["instrument_id"]
+            isOneToOne: false
+            referencedRelation: "instruments"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "universe_members_universe_id_fkey"
+            columns: ["universe_id"]
+            isOneToOne: false
+            referencedRelation: "universes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      universes: {
+        Row: {
+          asset_class: string
+          created_at: string
+          enabled: boolean
+          id: string
+          key: string
+          name: string
+          notes: string | null
+          purpose: string
+          updated_at: string
+          venue_id: string | null
+        }
+        Insert: {
+          asset_class: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          key: string
+          name: string
+          notes?: string | null
+          purpose: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Update: {
+          asset_class?: string
+          created_at?: string
+          enabled?: boolean
+          id?: string
+          key?: string
+          name?: string
+          notes?: string | null
+          purpose?: string
+          updated_at?: string
+          venue_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "universes_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      venues: {
+        Row: {
+          asset_classes: string[]
+          created_at: string
+          id: string
+          name: string
+          notes: string | null
+        }
+        Insert: {
+          asset_classes: string[]
+          created_at?: string
+          id: string
+          name: string
+          notes?: string | null
+        }
+        Update: {
+          asset_classes?: string[]
+          created_at?: string
+          id?: string
+          name?: string
+          notes?: string | null
+        }
+        Relationships: []
+      }
       weekly_reports: {
         Row: {
           created_at: string
@@ -1803,6 +2256,10 @@ export type Database = {
         Args: { p_config?: Json; p_integration: string; p_secret?: string }
         Returns: undefined
       }
+      venue_asset_classes_are_valid: {
+        Args: { classes: string[] }
+        Returns: boolean
+      }
     }
     Enums: {
       backtest_split: "DEVELOPMENT" | "VALIDATION" | "HOLDOUT"
@@ -1826,12 +2283,22 @@ export type Database = {
         | "OPENING"
         | "ERROR"
       signal_classification: "IGNORE" | "LOG" | "WATCH" | "CANDIDATE"
+      strategy_assignment_mode: "RESEARCH" | "SHADOW" | "PAPER" | "LIVE"
+      strategy_definition_type: "BUILT_IN" | "USER_DEFINED"
+      strategy_platform_status:
+        | "DRAFT"
+        | "RESEARCH_ONLY"
+        | "PAPER_ELIGIBLE"
+        | "PAPER_ACTIVE"
+        | "LIVE_ELIGIBLE"
+        | "ARCHIVED"
       strategy_status:
         | "DRAFT"
         | "BACKTESTING"
         | "PAPER_APPROVED"
         | "DEMO_APPROVED"
         | "RETIRED"
+      strategy_visibility: "PRIVATE" | "UNLISTED" | "PUBLIC"
       trade_side: "LONG"
       trade_status: "OPEN" | "CLOSED" | "CANCELLED" | "REJECTED"
       trading_mode: "OBSERVE" | "PAPER" | "DEMO" | "LIVE"
@@ -1985,6 +2452,16 @@ export const Constants = {
         "ERROR",
       ],
       signal_classification: ["IGNORE", "LOG", "WATCH", "CANDIDATE"],
+      strategy_assignment_mode: ["RESEARCH", "SHADOW", "PAPER", "LIVE"],
+      strategy_definition_type: ["BUILT_IN", "USER_DEFINED"],
+      strategy_platform_status: [
+        "DRAFT",
+        "RESEARCH_ONLY",
+        "PAPER_ELIGIBLE",
+        "PAPER_ACTIVE",
+        "LIVE_ELIGIBLE",
+        "ARCHIVED",
+      ],
       strategy_status: [
         "DRAFT",
         "BACKTESTING",
@@ -1992,6 +2469,7 @@ export const Constants = {
         "DEMO_APPROVED",
         "RETIRED",
       ],
+      strategy_visibility: ["PRIVATE", "UNLISTED", "PUBLIC"],
       trade_side: ["LONG"],
       trade_status: ["OPEN", "CLOSED", "CANCELLED", "REJECTED"],
       trading_mode: ["OBSERVE", "PAPER", "DEMO", "LIVE"],
