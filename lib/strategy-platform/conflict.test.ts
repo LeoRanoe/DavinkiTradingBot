@@ -4,9 +4,11 @@ import type { Opportunity } from "./types";
 
 function makeOpportunity(overrides: Partial<Opportunity>): Opportunity {
   return {
+    userId: "user-1",
     strategyDefinitionId: "def-1",
     strategyVersionId: "ver-1",
     strategyConfigurationId: "cfg-1",
+    strategyAssignmentId: "asn-1",
     instrumentId: "BTCUSDT",
     side: "LONG",
     signalTime: 1,
@@ -15,6 +17,7 @@ function makeOpportunity(overrides: Partial<Opportunity>): Opportunity {
     target: { price: 115, kind: "LIQUIDITY" },
     partialExitPlan: null,
     reasonCodes: [],
+    parameterSnapshot: {},
     featureSnapshot: {},
     confidence: null,
     priority: 100,

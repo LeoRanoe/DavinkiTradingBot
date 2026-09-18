@@ -18,6 +18,7 @@ import {
   Settings,
   ShieldCheck,
   Users,
+  Blocks,
 } from "lucide-react";
 import {
   Sidebar,
@@ -140,6 +141,16 @@ export function AppSidebar({ role }: { role: "owner" | "guest" }) {
               >
                 <Users />
                 <span>Access</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                render={<Link href="/settings/strategies" />}
+                isActive={pathname.startsWith("/settings/strategies")}
+                tooltip="Strategies"
+              >
+                <Blocks />
+                <span>Strategies</span>
               </SidebarMenuButton>
             </SidebarMenuItem>
           </SidebarMenu>

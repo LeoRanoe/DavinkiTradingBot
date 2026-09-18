@@ -126,3 +126,21 @@ export function canSetAssignmentMode(
   }
   return { ok: true };
 }
+
+/** Permissiveness rank, least to most - RESEARCH/SHADOW never execute; PAPER simulates; LIVE is real money. */
+const MODE_RANK: Record<StrategyAssignmentMode, number> = { RESEARCH: 0, SHADOW: 1, PAPER: 2, LIVE: 3 };
+
+/**
+ * Mode capability requires BOTH the assignment's requested mode AND
+ * system/user authorization to permit it (Prompt 3 S8) - the LESS
+ * permissive of the two always wins, never the more permissive. This is
+ * the orchestrator's single choke point for what mode an assignment
+ * actually runs in; `canSetAssignmentMode` above governs whether a
+ * *change* to the stored `mode` column is allowed at all (a DB/API-layer
+ * question), while this function governs what mode a given evaluation
+ * actually runs under (an orchestrator-layer question) - both must agree,
+ * and neither can push the other's answer toward LIVE.
+ */
+export function resolveEffectiveMode(requestedMode: StrategyAssignmentMode, systemAuthorizedMode: StrategyAssignmentMode): StrategyAssignmentMode {
+  return MODE_RANK[requestedMode] <= MODE_RANK[systemAuthorizedMode] ? requestedMode : systemAuthorizedMode;
+}

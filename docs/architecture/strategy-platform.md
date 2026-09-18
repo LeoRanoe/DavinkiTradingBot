@@ -1,19 +1,26 @@
-# Strategy Platform — Architecture (Prompt 1 foundation + Prompt 2 build-out)
+# Strategy Platform — Architecture (Prompt 1 foundation + Prompt 2 + Prompt 3)
 
-**Status: usable.** As of Prompt 2, JeanFX is fully implemented and runs
-through this platform's generic contract; a first Strategy Builder UI
-exists; the DSL can be compiled into a running strategy and backtested
-through the same generic engine as JeanFX. V1's production pipeline
-remains untouched. This document was written during Prompt 1 (sections 1-9
-below describe that foundation) and extended in place during Prompt 2
-(section 13) rather than rewritten, so it stays one coherent history rather
-than two documents that could drift apart. See `TASKS.md` /
-`docs/BUILD_STATE.md` for where this sits in the overall build, and
-`docs/strategies/jeanfx-v1-spec.md` for the JeanFX-specific spec.
+**Status: audit-ready.** JeanFX is fully implemented and runs through this
+platform's generic contract; a Strategy Builder UI exists; the DSL
+compiles into a running, backtestable strategy; a generic orchestrator
+(evaluation, compatibility, portfolio risk, conflict resolution, mode
+authorization, failure isolation, observability) exists and is tested but
+is **not** wired into the live scan job (Prompt 3 S33 - deliberate). V1's
+production pipeline remains untouched throughout. This document was
+written during Prompt 1 (sections 1-9: foundation), extended during
+Prompt 2 (section 13: JeanFX + Strategy Builder + generic backtesting),
+and extended again during Prompt 3 (section 14: orchestration/portfolio
+risk/conflicts/mode authorization/security audit) rather than rewritten
+each time, so it stays one coherent history. See `TASKS.md` /
+`docs/BUILD_STATE.md` for where this sits in the overall build,
+`docs/strategies/jeanfx-v1-spec.md` for the JeanFX-specific spec, and
+`docs/strategies/README.md` / `docs/user-strategies.md` for the built-in
+catalog and end-to-end user story.
 
-**Read section 13 first if you only have time for one section** - it's the
-Prompt 2 summary and supersedes anything below it says "not implemented
-yet" or "future work" that Prompt 2 actually built.
+**Read section 14 first if you only have time for one section** - it's the
+Prompt 3 summary (including a "what's NOT wired to production" list) and
+supersedes anything earlier that says "not implemented yet" or "future
+work" that a later prompt actually built.
 
 ## 1. Product model / execution flow
 
@@ -513,3 +520,203 @@ strategy); `templates.test.ts`; `import-export.test.ts` (including a
 "sneaky" payload proving a string that looks like JS source is inert data,
 never executed); `editor-model.test.ts` (UI state -> DSL -> validation
 round trip); `describe.test.ts`.
+
+## 14. Prompt 3 summary — orchestration, portfolio risk, conflicts, mode authorization
+
+Everything below is new in Prompt 3, composed on top of sections 1-13
+without changing the core `StrategyContract`/`Opportunity` shape except
+additive fields (see "Attribution" below).
+
+### The orchestrator (`lib/strategy-platform/orchestrator.ts`)
+
+`runOrchestrator()` implements the exact pipeline the brief specifies:
+
+```
+assignments x instruments -> evaluations -> opportunities
+  -> policy filtering (compatibility)
+  -> risk (portfolio limits, same-instrument aggregation)
+  -> conflict resolution (opposing directions)
+  -> [caller's execution selection / execution - OUT OF SCOPE]
+```
+
+It never executes anything - there is no order-placement call anywhere in
+the module, by construction, so "never execute while iterating" is
+structurally true rather than merely a promise. It collects every
+opportunity from every assignment/instrument cell first, then runs risk
+and conflict resolution once over the whole collected set. Every internal
+grouping step sorts its own keys before iterating (assignment IDs,
+instrument IDs, `(instrumentId, side)` pairs), so shuffling the input
+`assignments` or `instruments` arrays never changes the result - see
+`orchestrator.test.ts` "determinism regardless of array order" and
+`orchestrator.e2e.test.ts`.
+
+### Attribution (Prompt 3 S3)
+
+`Opportunity` (`types.ts`) gained `userId`, `strategyAssignmentId`, and
+`parameterSnapshot` (the exact parameters the strategy was evaluated
+with, frozen at signal time - a later configuration edit never rewrites
+what an old signal says it used). Combined with the fields it already had
+(`strategyDefinitionId`/`strategyVersionId`/`strategyConfigurationId`/
+`featureSnapshot`/`reasonCodes`), every opportunity the orchestrator
+produces is fully attributable back to exactly who/what produced it. This
+attribution is NOT yet threaded into a persisted signals feed or trade
+history - see "What's not wired to production" below.
+
+### Market-data dedupe (`evaluation-plan.ts`, Prompt 3 S28)
+
+`buildEvaluationPlan()` computes the distinct `(instrumentId, timeframe)`
+pairs across every assignment x its instruments x its strategy's
+`requiredTimeframes`. `loadMarketData()` calls the supplied
+`MarketDataProvider` exactly once per distinct pair, however many
+assignments need it - `orchestrator.test.ts` asserts a mock provider is
+called exactly once when two different strategies both need BTCUSDT H1.
+`distributeMarketData()` then does a pure in-memory lookup to build each
+assignment's `StrategyContext.candlesByTimeframe` - no second fetch, ever.
+
+### Compatibility (`compatibility.ts`, Prompt 3 S10)
+
+`checkStrategyCompatibility()` separates RESEARCH compatibility (asset
+class, side, minimum history) from EXECUTION compatibility (venue
+capability - e.g. long-only spot). A SHORT JeanFX setup on a long-only
+venue is `researchCompatible: true, executionCompatible: false` with the
+reason spelled out verbatim: *"JeanFX Liquidity System SHORT setups cannot
+currently execute on this venue because production execution here is
+long-only. Research/backtesting is still available."* The orchestrator
+routes execution-incompatible opportunities to `researchOnly` regardless
+of the assignment's own mode, since they could never execute anyway.
+
+### Same-instrument aggregation + portfolio risk (`portfolio-risk.ts`, Prompt 3 S4/S5)
+
+`applyPortfolioRisk()` groups same-instrument/same-direction opportunities
+into one `PositionIntent` (JeanFX LONG ETH + TRB LONG ETH -> one ETH LONG
+intent, combined risk, both opportunities preserved in
+`contributingOpportunities` for attribution) and enforces, in order: the
+instrument risk cap on the combined intent, a correlation-group cap (see
+below), per-strategy risk cap, per-strategy position cap, total position
+cap (deterministic acceptance order), then total open risk and
+per-asset-class exposure caps. Every rejection carries a reason
+(`INSTRUMENT_RISK_CAP`, `STRATEGY_RISK_CAP`, `TOTAL_POSITION_CAP`, etc.) -
+nothing is silently dropped.
+
+**Correlation is honestly NOT modeled as solved** (Prompt 3 S4 explicit
+instruction): `CorrelationPolicy` is an architecture hook -
+`NO_CORRELATION_MODELING` (the default) treats every instrument as its own
+group, so `maxCorrelatedExposurePct` has no effect beyond the per-
+instrument cap unless a caller supplies a real grouping (e.g. "BTC and ETH
+are correlated") - tested explicitly in `portfolio-risk.test.ts` showing
+both the no-op default and a real grouping actually capping combined
+exposure.
+
+### Opposing-direction conflicts (`conflict.ts`, unchanged from Prompt 1)
+
+Runs AFTER portfolio risk, on whatever survived it. The conservative
+default (`BLOCK_OPPOSING_SIGNALS` - functionally identical to what the
+brief calls `BLOCK_CONFLICTING_DIRECTION`, kept under its original name to
+avoid churning already-tested Prompt 1 code) blocks BOTH sides of an
+opposing pair from `executable`, while every opportunity - both sides -
+remains in the orchestrator's `researchOnly`/`shadowed`/`blocked` output
+for analytics. Nothing is netted.
+
+### Mode authorization - less permissive always wins (`authorization.ts`, Prompt 3 S8)
+
+`resolveEffectiveMode(requestedMode, systemAuthorizedMode)` ranks
+`RESEARCH < SHADOW < PAPER < LIVE` and returns whichever side is LESS
+permissive. `AssignmentInput.effectiveMode` (the orchestrator's input) is
+expected to already be this resolved value - the orchestrator does not
+re-derive authorization itself, but it DOES refuse an `effectiveMode` of
+`LIVE` unconditionally as one more layer of defense in depth, logging an
+`EvaluationError` rather than silently accepting it, since `LIVE` should
+be structurally unreachable in this codebase regardless.
+
+### Failure isolation (Prompt 3 S30)
+
+Each `(assignment, instrument)` cell's `strategy.evaluate()` call is
+wrapped in its own `try/catch` inside the orchestrator's loop. A throwing
+custom strategy produces one `EvaluationError` scoped to that cell
+(`strategyAssignmentId`, `strategyDefinitionId`, `instrumentId`, message)
+and the loop continues - every other assignment (JeanFX, TRB, other
+users, other instruments) still evaluates normally in the same run. Tested
+directly in `orchestrator.test.ts`.
+
+### Observability (`ScanObservability`, Prompt 3 S29)
+
+One aggregate-counts object per orchestrator run (`assignmentsEvaluated`,
+`strategyEvaluations`, `instrumentsEvaluated`, `opportunitiesGenerated`,
+`conflicts`, `riskRejected`, `executed`, `shadowed`, plus a
+`byStrategy` breakdown keyed by `strategyDefinitionId`) - never one record
+per no-op rule evaluation, which would flood the DB/logs for no benefit.
+
+### AI assistant boundary (`ai-assistant.ts`, Prompt 3 S24/S25)
+
+A CONTRACT, not a live integration - no LLM provider is called anywhere in
+this file. `AiDslProposal` is always `status: "DRAFT"`; `reviewAiProposal()`
+is the only door a proposal can pass through, and it runs the identical
+`validateDslDefinition()` a human-authored strategy goes through - no
+separate, looser "AI path" exists. `AI_ASSISTANT_BOUNDARY` documents the
+allowed/forbidden action lists as data, and a test
+(`ai-assistant.test.ts`) asserts the module exports nothing named after any
+forbidden capability (`activatePaper`, `activateLive`, etc.) - the boundary
+is checked, not just claimed.
+
+### RLS audit findings and fixes (Prompt 3 S26/S27)
+
+Auditing `app/api/strategies/*` and the Prompt 1/2 migrations found two
+real foreign-key-level authorization gaps: `strategy_configurations` could
+be inserted referencing another user's private `strategy_version_id`
+(only row ownership was checked, not the referenced version's
+readability), and the same class of gap existed for
+`strategy_assignments` -> `strategy_configuration_id`. Both are fixed in
+`supabase/migrations/20260919000000_strategy_platform_configuration_version_check.sql`
+(additive RLS policy replacement, constrains each foreign key to rows the
+inserting/updating user can actually read) plus a matching app-layer check
+in `app/api/strategies/assign/route.ts` (`canReadDefinition()`) that
+returns a clear 403 before ever attempting the insert. Every mutation
+route resolves identity exclusively from the authenticated session
+(`supabase.auth.getUser()`) - client-supplied `userId`, `mode` beyond
+`RESEARCH`/`SHADOW`, or `owner_user_id` are never trusted; the `mode`
+field in every request schema is a Zod enum that structurally cannot
+contain `"PAPER"` or `"LIVE"` for `POST /api/strategies/assign`, and
+`PATCH /api/strategies/assignments/[id]` (new in Prompt 3, backs Settings
+-> Strategies) has the identical restriction. Both routes also apply
+`isOwner()` /`eq("user_id", user.id)` explicitly as defense in depth on
+top of RLS, not instead of it.
+
+### Settings → Strategies (`/settings/strategies`, Prompt 3 S15)
+
+Lists the signed-in user's assignments (strategy name, configuration,
+markets, priority, mode, enabled) with inline enable/disable and a
+RESEARCH<->SHADOW mode switch. PAPER is displayed but never offered as a
+switchable option from this screen - it requires the separate owner-
+authorization step from Prompt 1/2's trigger-enforced model, which this
+UI does not attempt to add a path around.
+
+### What's NOT wired to production (stated plainly, not hidden)
+
+- `runOrchestrator()` is a complete, tested, standalone module. **It is
+  not called from `app/api/jobs/scan/route.ts`** - the live scan job still
+  runs V1's own dedicated pipeline exactly as before. Prompt 3 S33
+  explicitly says not to migrate the active PAPER experiment into the new
+  orchestration mid-window, so this is intentional, not an oversight: the
+  orchestrator is ready to be invoked by a future research/shadow job
+  once that's explicitly approved.
+- There is consequently no persisted "signals" feed row for a JeanFX or
+  custom-strategy opportunity yet, and no trade-history entry either -
+  attribution exists end-to-end on the `Opportunity` type and is proven in
+  tests, but nothing writes an `Opportunity` to a database table in this
+  checkpoint. A signal feed UI showing "JeanFX Liquidity System / ETH/USDT
+  / LONG / liquidity sweep -> bullish BOS -> FVG retrace" per Prompt 3 S16
+  needs that persistence layer built first.
+- Multi-strategy analytics (PnL/expectancy/profit factor by strategy,
+  Prompt 3 S17/S18) has the same dependency - there is nothing to
+  aggregate until opportunities/trades are persisted with attribution.
+- Strategy health status values (Prompt 3 S19: `ACTIVE`, `DISABLED`,
+  `INSUFFICIENT_HISTORY`, etc.) are producible today from
+  `OrchestratorResult.incompatible`/`errors`, but no page surfaces them yet.
+- A user strategy audit log (Prompt 3 S20 - who/what/when/old-new for
+  created/versioned/configured/assigned/archived) is not implemented; the
+  four Prompt 1/2 migrations' `created_at`/`created_by` columns are the
+  only audit trail that exists today.
+- The `docs/strategies/README.md` catalog page content and
+  `docs/user-strategies.md` are new in this checkpoint (see the repo root)
+  and describe the end-to-end user story; they are documentation, not new
+  UI surfaces beyond what's listed above.

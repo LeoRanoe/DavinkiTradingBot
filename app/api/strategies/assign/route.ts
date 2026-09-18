@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { isOwner } from "@/lib/auth/authorization";
 import { isMissingTableError } from "@/lib/strategy-platform/db";
+import { canReadDefinition } from "@/lib/strategy-platform/authorization";
 
 /**
  * "Use this strategy" (spec Prompt 2 S16): creates a StrategyConfiguration
@@ -26,7 +27,10 @@ export async function POST(request: NextRequest) {
   const typedSupabase = await createClient();
   const supabase = typedSupabase as unknown as {
     auth: typeof typedSupabase.auth;
-    from: (table: string) => { insert: (row: Record<string, unknown>) => { select: () => { single: () => Promise<{ data: unknown; error: { message: string } | null }> } } };
+    from: (table: string) => {
+      insert: (row: Record<string, unknown>) => { select: () => { single: () => Promise<{ data: unknown; error: { message: string } | null }> } };
+      select: (cols: string) => { eq: (col: string, v: string) => { single: () => Promise<{ data: unknown; error: { message: string } | null }> } };
+    };
   };
   const {
     data: { user },
@@ -45,6 +49,37 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Invalid request", issues: parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`) }, { status: 400 });
   }
   const { strategyVersionId, configurationName, instrumentIds, parameters, mode } = parsed.data;
+
+  // RLS audit fix (Prompt 3 S27): never trust that a client-supplied
+  // strategyVersionId is one the caller is actually allowed to see. Resolve
+  // its owning definition and check readability the same way
+  // strategy_platform_versions_select RLS does, before ever inserting -
+  // gives a clear 403 instead of a raw RLS-denial DB error, and is a
+  // second, app-layer line of defense on top of the RLS fix in
+  // supabase/migrations/20260919000000_strategy_platform_configuration_version_check.sql.
+  const versionLookup = await supabase.from("strategy_platform_versions").select("strategy_definition_id").eq("id", strategyVersionId).single();
+  if (versionLookup.error) {
+    if (isMissingTableError(versionLookup.error)) {
+      return NextResponse.json(
+        { error: "Strategy platform tables are not yet available - the foundation migration has not been applied to this environment." },
+        { status: 503 },
+      );
+    }
+    return NextResponse.json({ error: "Strategy version not found" }, { status: 404 });
+  }
+  const definitionId = (versionLookup.data as { strategy_definition_id: string }).strategy_definition_id;
+  const definitionLookup = await supabase.from("strategy_definitions").select("id, type, owner_user_id, visibility").eq("id", definitionId).single();
+  if (definitionLookup.error) {
+    return NextResponse.json({ error: "Strategy definition not found" }, { status: 404 });
+  }
+  const definitionRow = definitionLookup.data as { type: "BUILT_IN" | "USER_DEFINED"; owner_user_id: string | null; visibility: "PRIVATE" | "UNLISTED" | "PUBLIC" };
+  const canRead = canReadDefinition(
+    { userId: user.id, role: isOwner(user) ? "owner" : "guest" },
+    { id: definitionId, type: definitionRow.type, ownerUserId: definitionRow.owner_user_id, visibility: definitionRow.visibility },
+  );
+  if (!canRead) {
+    return NextResponse.json({ error: "You do not have access to this strategy version" }, { status: 403 });
+  }
 
   const configInsert = await supabase
     .from("strategy_configurations")

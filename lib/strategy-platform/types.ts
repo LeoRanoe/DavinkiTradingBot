@@ -136,9 +136,12 @@ export interface StrategyContract {
  * is not forced onto this generic shape).
  */
 export type Opportunity = {
+  /** Full attribution (Prompt 3 S3) - every opportunity must be traceable to exactly who/what produced it. */
+  userId: string;
   strategyDefinitionId: string;
   strategyVersionId: string;
   strategyConfigurationId: string | null;
+  strategyAssignmentId: string | null;
   instrumentId: string;
   side: Direction;
   signalTime: number;
@@ -147,8 +150,37 @@ export type Opportunity = {
   target: TargetModel;
   partialExitPlan: PartialExitPlan | null;
   reasonCodes: string[];
+  /** The exact parameters the strategy was evaluated with - so a signal remains explainable even after a configuration is later edited (a new version/configuration, never a mutation of this snapshot). */
+  parameterSnapshot: Record<string, unknown>;
   featureSnapshot: Record<string, unknown>;
   confidence: number | null;
   /** Set by the assignment that produced this opportunity; used by conflict resolution. */
   priority: number;
+};
+
+/**
+ * Per-run scanner/orchestrator observability (Prompt 3 S29). Aggregate
+ * counts only - one row per orchestrator run, never one record per
+ * no-op rule evaluation (that would flood the DB/logs for no benefit).
+ */
+export type ScanObservability = {
+  assignmentsEvaluated: number;
+  strategyEvaluations: number;
+  instrumentsEvaluated: number;
+  opportunitiesGenerated: number;
+  conflicts: number;
+  riskRejected: number;
+  executed: number;
+  shadowed: number;
+  /** Per-strategy-definition breakdown, keyed by strategyDefinitionId. */
+  byStrategy: Record<string, { evaluations: number; opportunities: number; errors: number }>;
+  errors: EvaluationError[];
+};
+
+/** One assignment's evaluation failing must never abort any other (Prompt 3 S30). */
+export type EvaluationError = {
+  strategyAssignmentId: string;
+  strategyDefinitionId: string;
+  instrumentId: string;
+  message: string;
 };

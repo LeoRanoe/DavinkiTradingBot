@@ -7,6 +7,7 @@ import {
   canMutateDefinition,
   canReadDefinition,
   canSetAssignmentMode,
+  resolveEffectiveMode,
   DEFAULT_ASSIGNMENT_MODE,
   type StrategyAssignmentRow,
   type StrategyDefinitionRow,
@@ -157,5 +158,27 @@ describe("execution mode authorization - no path to LIVE, PAPER requires owner",
   it("once already authorized, the owning user can keep PAPER without re-authorization", () => {
     const assignment: StrategyAssignmentRow = { id: "a-1", userId: owner.userId, mode: "PAPER", paperAuthorizedBy: owner.userId };
     expect(canSetAssignmentMode(owner, assignment, "PAPER")).toEqual({ ok: true });
+  });
+});
+
+describe("resolveEffectiveMode - the less-permissive side always wins", () => {
+  it("requested and authorized agreeing returns that mode", () => {
+    expect(resolveEffectiveMode("RESEARCH", "RESEARCH")).toBe("RESEARCH");
+    expect(resolveEffectiveMode("PAPER", "PAPER")).toBe("PAPER");
+  });
+
+  it("a more-permissive request than authorization is downgraded to the authorized mode", () => {
+    expect(resolveEffectiveMode("PAPER", "RESEARCH")).toBe("RESEARCH");
+    expect(resolveEffectiveMode("LIVE", "PAPER")).toBe("PAPER");
+  });
+
+  it("a more-permissive authorization than the request stays at the requested (less permissive) mode", () => {
+    expect(resolveEffectiveMode("RESEARCH", "LIVE")).toBe("RESEARCH");
+    expect(resolveEffectiveMode("SHADOW", "PAPER")).toBe("SHADOW");
+  });
+
+  it("LIVE only survives when BOTH sides say LIVE - and nothing in this codebase ever authorizes that", () => {
+    expect(resolveEffectiveMode("LIVE", "LIVE")).toBe("LIVE");
+    expect(resolveEffectiveMode("LIVE", "RESEARCH")).toBe("RESEARCH");
   });
 });
