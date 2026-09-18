@@ -45,6 +45,11 @@ const optionalSchema = z.object({
   TELEGRAM_WEBHOOK_SECRET: optionalString(),
   BYBIT_DEMO_API_KEY: optionalString(),
   BYBIT_DEMO_API_SECRET: optionalString(),
+  // JeanFX Gold (XAU/USD) PAPER research market data - optional integration,
+  // same absence-is-fine pattern as Qwen/Telegram above. See
+  // lib/strategy-platform/gold/market-data-provider.ts.
+  GOLD_DATA_API_KEY: optionalString(),
+  GOLD_DATA_BASE_URL: optionalUrl(),
   NEXT_PUBLIC_APP_URL: optionalUrl(),
 });
 
