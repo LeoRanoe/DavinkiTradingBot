@@ -11,6 +11,7 @@ import {
   flatBiasCandles,
   mirroredBearishStructureCandles,
 } from "./primitives/__fixtures__/bullish-scenario";
+import { readFile } from "node:fs/promises";
 import { runJeanfxDirection, determineHtfBias } from "./state-machine";
 import { JEANFX_V1_PARAMS } from "./config";
 import type { CanonicalCandle } from "./types";
@@ -21,15 +22,42 @@ function m15(index: number, v: number, overrides: Partial<CanonicalCandle> = {})
 
 const userConfig = { confirmationPatterns: "BOTH" as const, sessionFilter: "ALL" as const };
 
-describe("determineHtfBias", () => {
-  it("is BULLISH on a sustained uptrend and BEARISH on a sustained downtrend", () => {
-    expect(determineHtfBias(bullishBiasCandles())).toBe("BULLISH");
-    expect(determineHtfBias(bearishBiasCandles())).toBe("BEARISH");
+describe("determineHtfBias - liquidity-based (SOURCE rule)", () => {
+  it("is BULLISH when the nearest unswept liquidity sits BELOW price (sell-side draw)", () => {
+    // Rising market: every previously-formed session high/low is now below
+    // price, so the only liquidity still in front of price is sell-side.
+    // Source: "Determine bias by observing where liquidity sits relative to
+    // price" + a sell-side sweep precedes a bullish shift.
+    const result = determineHtfBias(bullishBiasCandles(), JEANFX_V1_PARAMS);
+    expect(result.bias).toBe("BULLISH");
+    expect(result.reasonCode).toBe("DRAW_SELL_SIDE");
+    expect(result.draw?.side).toBe("SELL_SIDE");
   });
 
-  it("is NONE when there's no clear trend or insufficient history", () => {
-    expect(determineHtfBias(flatBiasCandles())).toBe("NONE");
-    expect(determineHtfBias([])).toBe("NONE");
+  it("is BEARISH when the nearest unswept liquidity sits ABOVE price (buy-side draw)", () => {
+    const result = determineHtfBias(bearishBiasCandles(), JEANFX_V1_PARAMS);
+    expect(result.bias).toBe("BEARISH");
+    expect(result.reasonCode).toBe("DRAW_BUY_SIDE");
+    expect(result.draw?.side).toBe("BUY_SIDE");
+  });
+
+  it("is NONE when the draw is ambiguous or no liquidity is mapped", () => {
+    // Perfectly flat: buy-side and sell-side liquidity are equidistant, so
+    // the draw is genuinely undecidable and must not be guessed.
+    const flat = determineHtfBias(flatBiasCandles(), JEANFX_V1_PARAMS);
+    expect(flat.bias).toBe("NONE");
+    expect(["AMBIGUOUS_DRAW", "NO_LIQUIDITY_MAPPED"]).toContain(flat.reasonCode);
+
+    const empty = determineHtfBias([], JEANFX_V1_PARAMS);
+    expect(empty.bias).toBe("NONE");
+    expect(empty.reasonCode).toBe("MISSING_MARKET_DATA");
+  });
+
+  it("never consults EMAs - JeanFX bias is a liquidity read, not a trend read", async () => {
+    const source = await readFile(new URL("./state-machine.ts", import.meta.url), "utf8");
+    expect(source).not.toMatch(/\bema\b/i);
+    const biasSource = await readFile(new URL("./primitives/bias.ts", import.meta.url), "utf8");
+    expect(biasSource).not.toMatch(/\bema\(/i);
   });
 });
 
@@ -100,13 +128,33 @@ describe("invalidation", () => {
     expect(result.transitions.at(-1)?.reasonCode).toBe("FVG_INVALIDATED");
   });
 
-  it("INVALIDATED with NO_VALID_TARGET_RR when no liquidity pool clears the minimum R:R", () => {
+  it("INVALIDATED with NO_TARGET_LIQUIDITY when there is no opposing liquidity pool at all", () => {
     const structure = bullishStructureCandles().filter((c) => c.openTime !== 2 * M15_MS && c.openTime !== 1 * M15_MS && c.openTime !== 0); // drop the 251 target swing entirely
     const fvgFormedAt = structure[structure.length - 1].openTime;
     const entry = bullishEntryCandles(fvgFormedAt);
     const result = runJeanfxDirection(bullishBiasCandles(), structure, entry, "LONG", JEANFX_V1_PARAMS, userConfig);
     expect(result.state).toBe("INVALIDATED");
-    expect(result.transitions.at(-1)?.reasonCode).toBe("NO_VALID_TARGET_RR");
+    expect(result.transitions.at(-1)?.reasonCode).toBe("NO_TARGET_LIQUIDITY");
+  });
+
+  it("rejects with RR_BELOW_MINIMUM rather than re-targeting a further pool to manufacture 3R", () => {
+    // SOURCE: "Targets are placed at the next liquidity pool" AND "Risk
+    // Reward Minimum 1:3". Here a NEAR buy-side pool (~156) is planted above
+    // the entry (~119) but well inside 3R, while the far 251 pool WOULD
+    // clear 3R. The old scan-forward selection skipped past the near pool to
+    // the 251 one - manufacturing the required R:R and aiming at a level
+    // JeanFX never pointed to. Correct behaviour is to reject.
+    const structure = bullishStructureCandles().map((c) => {
+      const bump: Record<number, number> = { 5: 120, 6: 155, 7: 120 };
+      const v = bump[c.openTime / M15_MS];
+      return v === undefined ? c : { ...c, open: v, close: v, high: v + 1, low: v - 1 };
+    });
+    const entry = bullishEntryCandles(structure[structure.length - 1].openTime);
+    const result = runJeanfxDirection(bullishBiasCandles(), structure, entry, "LONG", JEANFX_V1_PARAMS, userConfig);
+
+    expect(result.setup).toBeNull();
+    expect(result.state).toBe("INVALIDATED");
+    expect(result.transitions.at(-1)?.reasonCode).toBe("RR_BELOW_MINIMUM");
   });
 });
 

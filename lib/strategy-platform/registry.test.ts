@@ -13,7 +13,7 @@ describe("built-in strategy registry", () => {
   });
 
   it("resolves a known slug", () => {
-    expect(getBuiltInStrategy("jeanfx-v1")?.metadata.displayName).toBe("JeanFX Liquidity System");
+    expect(getBuiltInStrategy("jeanfx-v1")?.metadata.displayName).toBe("JeanFX Gold");
   });
 
   it("returns undefined for an unknown slug", () => {

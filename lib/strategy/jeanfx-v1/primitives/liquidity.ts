@@ -4,6 +4,8 @@ import type { SwingPoint } from "./swings";
 import type { EqualLevelCluster } from "./equal-levels";
 import { classifySession, type SessionWindow } from "./sessions";
 import { isSweepCandle } from "./sweep";
+import { detectSwingHighs, detectSwingLows } from "./swings";
+import { findEqualHighs, findEqualLows } from "./equal-levels";
 
 /**
  * Liquidity pool assembly - SOURCE RULE: the brief names equal highs/lows,
@@ -72,4 +74,116 @@ export function markSweptPools(pools: LiquidityPool[], candles: CanonicalCandle[
     }
     return pool;
   });
+}
+
+/**
+ * A liquidity pool plus the index of the candle at which it became KNOWN.
+ *
+ * `confirmedAtIndex` is the no-lookahead guard (spec S22): a pool must never
+ * be treated as existing before the bar that confirmed it. For a swing that
+ * is swingIndex + rightBars (the fractal needs its right-hand bars to close);
+ * for a session high/low it is the last bar of that completed session.
+ */
+export type TrackedLiquidityPool = LiquidityPool & { confirmedAtIndex: number };
+
+/**
+ * Session high/low pools for EVERY completed instance of each window, each
+ * tagged with the index at which the session closed. Unlike
+ * sessionHighLowPools (which returns only the single most recent completed
+ * instance and carries no index), this is safe to use inside a historical
+ * walk: a pool only becomes visible once its own session has finished.
+ */
+export function sessionHighLowPoolsIndexed(candles: CanonicalCandle[], windows: SessionWindow[]): TrackedLiquidityPool[] {
+  if (candles.length === 0) return [];
+  const pools: TrackedLiquidityPool[] = [];
+
+  for (const window of windows) {
+    type Group = { key: string; members: { candle: CanonicalCandle; index: number }[] };
+    const groups: Group[] = [];
+
+    for (let i = 0; i < candles.length; i++) {
+      const c = candles[i];
+      if (classifySession(c.openTime, [window]).length === 0) continue;
+      const dayKey = new Intl.DateTimeFormat("en-CA", { timeZone: window.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(c.openTime));
+      const last = groups[groups.length - 1];
+      if (last && last.key === dayKey) last.members.push({ candle: c, index: i });
+      else groups.push({ key: dayKey, members: [{ candle: c, index: i }] });
+    }
+
+    // The final group may still be forming, so it is never treated as completed liquidity.
+    for (const group of groups.slice(0, -1)) {
+      const high = group.members.reduce((best, m) => (m.candle.high > best.candle.high ? m : best));
+      const low = group.members.reduce((best, m) => (m.candle.low < best.candle.low ? m : best));
+      const closedAt = group.members[group.members.length - 1].index;
+      pools.push({ side: "BUY_SIDE", level: high.candle.high, sourceCandleTimes: [high.candle.openTime], kind: "SESSION_HIGH_LOW", swept: false, confirmedAtIndex: closedAt });
+      pools.push({ side: "SELL_SIDE", level: low.candle.low, sourceCandleTimes: [low.candle.openTime], kind: "SESSION_HIGH_LOW", swept: false, confirmedAtIndex: closedAt });
+    }
+  }
+
+  return pools;
+}
+
+/**
+ * Builds the complete JeanFX liquidity map for one side of the book.
+ *
+ * SOURCE RULE - the source names all of these as liquidity:
+ *   "These zones are typically found above highs, below lows, equal
+ *    highs/lows, and obvious support/resistance levels."
+ *   "Map equal highs, equal lows, session highs and previous highs/lows.
+ *    These zones represent clusters of stop losses."
+ *
+ * So the map covers three source-named kinds:
+ *   EQUAL_HIGH_LOW  - equal highs / equal lows
+ *   PRIOR_SWING     - previous highs / previous lows
+ *   SESSION_HIGH_LOW- session highs / session lows
+ *
+ * "Obvious support/resistance" is deliberately NOT a fourth category: the
+ * source never defines it numerically, and inventing a definition would be
+ * an unlabelled implementation assumption driving live entries. In practice
+ * the repeatedly-respected levels it describes surface as equal highs/lows
+ * or prior swings already. This is recorded as a SOURCE AMBIGUITY.
+ *
+ * Every pool carries confirmedAtIndex, so a historical walk can filter to
+ * the pools that actually existed at the bar being evaluated.
+ */
+export function buildLiquidityMap(
+  candles: CanonicalCandle[],
+  side: "BUY_SIDE" | "SELL_SIDE",
+  params: { swingLeftRightBars: number; equalHighLowAtrMultiple: number; atrPeriod: number },
+  sessionWindows: SessionWindow[],
+): TrackedLiquidityPool[] {
+  const { swingLeftRightBars, equalHighLowAtrMultiple, atrPeriod } = params;
+  const swings: SwingPoint[] =
+    side === "BUY_SIDE" ? detectSwingHighs(candles, swingLeftRightBars) : detectSwingLows(candles, swingLeftRightBars);
+  const clusters =
+    side === "BUY_SIDE"
+      ? findEqualHighs(candles, swings, equalHighLowAtrMultiple, atrPeriod)
+      : findEqualLows(candles, swings, equalHighLowAtrMultiple, atrPeriod);
+
+  const pools: TrackedLiquidityPool[] = clusters.map((c) => ({
+    side,
+    level: c.level,
+    sourceCandleTimes: c.members.map((m) => m.candleTime),
+    kind: "EQUAL_HIGH_LOW",
+    swept: false,
+    // An equal-level cluster only exists once its LAST member swing is confirmed.
+    confirmedAtIndex: Math.max(...c.members.map((m) => m.index)) + swingLeftRightBars,
+  }));
+
+  const clusteredTimes = new Set(clusters.flatMap((c) => c.members.map((m) => m.candleTime)));
+  for (const s of swings) {
+    if (clusteredTimes.has(s.candleTime)) continue;
+    pools.push({
+      side,
+      level: s.price,
+      sourceCandleTimes: [s.candleTime],
+      kind: "PRIOR_SWING",
+      swept: false,
+      confirmedAtIndex: s.index + swingLeftRightBars,
+    });
+  }
+
+  pools.push(...sessionHighLowPoolsIndexed(candles, sessionWindows).filter((p) => p.side === side));
+
+  return pools;
 }

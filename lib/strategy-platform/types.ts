@@ -124,6 +124,18 @@ export type StrategyDecision =
 export interface StrategyContract {
   metadata: StrategyMetadata;
   evaluate(ctx: StrategyContext): StrategyDecision;
+  /**
+   * Timeframes this strategy needs GIVEN a specific configuration.
+   *
+   * `metadata.requiredTimeframes` is static, so a strategy whose timeframes
+   * depend on user configuration (JeanFX: M30 bias vs H1 bias) would
+   * otherwise have market data fetched for the wrong timeframe while still
+   * appearing to work - it would silently evaluate H1 candles as if they
+   * were the M30 the operator selected. Strategies with configurable
+   * timeframes MUST implement this; the orchestrator prefers it over
+   * metadata.requiredTimeframes whenever it is present.
+   */
+  resolveRequiredTimeframes?(parameters: Record<string, unknown>): Timeframe[];
   /** Optional: manage an already-open position (trail stop, partial exit, exit). */
   evaluatePositionManagement?(ctx: StrategyContext): StrategyDecision;
 }

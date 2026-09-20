@@ -1,13 +1,12 @@
-import { ema } from "@/lib/indicators/ema";
 import { atr } from "@/lib/indicators/atr";
-import { detectSwingHighs, detectSwingLows, latestSwingHigh, latestSwingLow } from "./primitives/swings";
-import { findEqualHighs, findEqualLows } from "./primitives/equal-levels";
+import { latestSwingHigh, latestSwingLow } from "./primitives/swings";
 import { detectSweep } from "./primitives/sweep";
 import { detectStructureEvent } from "./primitives/structure";
 import { detectFvgAt, isDisplacementCandle, isFvgInvalidated, touchesFvg } from "./primitives/fvg";
 import { isBearishEngulfing, isBullishEngulfing, isHammer, isShootingStar } from "./primitives/candles";
 import { classifySession, JEANFX_DEFAULT_SESSION_WINDOWS, type SessionWindow } from "./primitives/sessions";
-import { sessionHighLowPools } from "./primitives/liquidity";
+import { buildLiquidityMap, type TrackedLiquidityPool } from "./primitives/liquidity";
+import { determineLiquidityBias, type BiasResult } from "./primitives/bias";
 import type { JeanfxV1Params, JeanfxConfirmationPatternsChoice, JeanfxSessionFilterChoice } from "./config";
 import type {
   CanonicalCandle,
@@ -64,40 +63,54 @@ function confirmationAllowed(pattern: "BULLISH_ENGULFING" | "BEARISH_ENGULFING" 
   return !isEngulfing; // HAMMER_SHOOTING_STAR
 }
 
-/** IMPLEMENTATION ASSUMPTION: HTF bias determination is not specified by the brief - reuses the EMA50>EMA200-and-price-above/below-EMA50 test, independent of V1's own copy of the same idea. */
-export function determineHtfBias(biasCandles: CanonicalCandle[]): "BULLISH" | "BEARISH" | "NONE" {
-  const closes = biasCandles.map((c) => c.close);
-  const ema50 = ema(closes, 50);
-  const ema200 = ema(closes, 200);
-  const i = closes.length - 1;
-  if (i < 0 || !Number.isFinite(ema50[i]) || !Number.isFinite(ema200[i])) return "NONE";
-  if (ema50[i] > ema200[i] && closes[i] > ema50[i]) return "BULLISH";
-  if (ema50[i] < ema200[i] && closes[i] < ema50[i]) return "BEARISH";
-  return "NONE";
+/**
+ * SOURCE RULE - JeanFX HTF bias is a LIQUIDITY read, not a trend read.
+ *
+ * Maps liquidity on the bias timeframe and asks which pool price is drawing
+ * toward; the true direction is away from that draw (see primitives/bias.ts
+ * for the source quotes this is derived from).
+ *
+ * EMA50/EMA200 are deliberately NOT consulted: they appear nowhere in the
+ * JeanFX source and previously turned JeanFX into generic trend-following.
+ */
+export function determineHtfBias(biasCandles: CanonicalCandle[], params: JeanfxV1Params): BiasResult {
+  const mapParams = {
+    swingLeftRightBars: params.swing.leftBars,
+    equalHighLowAtrMultiple: params.equalHighLowAtrMultiple,
+    atrPeriod: params.atrPeriod,
+  };
+  const pools: TrackedLiquidityPool[] = [
+    ...buildLiquidityMap(biasCandles, "BUY_SIDE", mapParams, JEANFX_DEFAULT_SESSION_WINDOWS),
+    ...buildLiquidityMap(biasCandles, "SELL_SIDE", mapParams, JEANFX_DEFAULT_SESSION_WINDOWS),
+  ];
+
+  // No lookahead: only pools confirmed by the final closed bias candle count.
+  const lastIndex = biasCandles.length - 1;
+  const visible = pools.filter((p) => p.confirmedAtIndex <= lastIndex);
+
+  const atrSeries = atr(biasCandles, params.atrPeriod);
+  const lastAtr = Number.isFinite(atrSeries[lastIndex]) ? atrSeries[lastIndex] : 0;
+  const tolerance = params.biasAmbiguityAtrMultiple * lastAtr;
+
+  return determineLiquidityBias(biasCandles, visible, tolerance);
 }
 
-type TrackedPool = LiquidityPool & { confirmedAtIndex: number };
+type TrackedPool = TrackedLiquidityPool;
 
+/**
+ * SOURCE RULE: liquidity is equal highs/lows, previous highs/lows AND
+ * session highs/lows ("Map equal highs, equal lows, session highs and
+ * previous highs/lows"). All three kinds feed the SWEEP hunt - previously
+ * session pools were only ever used as targets, so JeanFX could not sweep
+ * the very liquidity the source says London goes after.
+ */
 function buildTrackedPools(structureCandles: CanonicalCandle[], side: "BUY_SIDE" | "SELL_SIDE", params: JeanfxV1Params): TrackedPool[] {
-  const leftRight = params.swing.leftBars;
-  const swings: SwingPoint[] = side === "BUY_SIDE" ? detectSwingHighs(structureCandles, leftRight) : detectSwingLows(structureCandles, leftRight);
-  const clusters = side === "BUY_SIDE" ? findEqualHighs(structureCandles, swings, params.equalHighLowAtrMultiple, params.atrPeriod) : findEqualLows(structureCandles, swings, params.equalHighLowAtrMultiple, params.atrPeriod);
-
-  const pools: TrackedPool[] = clusters.map((c) => ({
+  return buildLiquidityMap(
+    structureCandles,
     side,
-    level: c.level,
-    sourceCandleTimes: c.members.map((m) => m.candleTime),
-    kind: "EQUAL_HIGH_LOW",
-    swept: false,
-    confirmedAtIndex: Math.max(...c.members.map((m) => m.index)) + leftRight,
-  }));
-
-  const clusteredTimes = new Set(clusters.flatMap((c) => c.members.map((m) => m.candleTime)));
-  for (const s of swings) {
-    if (clusteredTimes.has(s.candleTime)) continue;
-    pools.push({ side, level: s.price, sourceCandleTimes: [s.candleTime], kind: "PRIOR_SWING", swept: false, confirmedAtIndex: s.index + leftRight });
-  }
-  return pools;
+    { swingLeftRightBars: params.swing.leftBars, equalHighLowAtrMultiple: params.equalHighLowAtrMultiple, atrPeriod: params.atrPeriod },
+    JEANFX_DEFAULT_SESSION_WINDOWS,
+  );
 }
 
 /**
@@ -274,13 +287,16 @@ export function runJeanfxDirection(
     return { state: "WAITING_FOR_BIAS", transitions, setup: null };
   }
 
-  const bias = determineHtfBias(biasCandles);
+  const biasResult = determineHtfBias(biasCandles, params);
   const requiredBias = direction === "LONG" ? "BULLISH" : "BEARISH";
-  if (bias !== requiredBias) {
-    push("WAITING_FOR_BIAS", "NO_HTF_BIAS", biasCandles[biasCandles.length - 1].openTime, null);
+  const lastBiasTime = biasCandles[biasCandles.length - 1].openTime;
+  if (biasResult.bias !== requiredBias) {
+    // Carry the liquidity reason through, so the UI can say "ambiguous draw"
+    // or "no liquidity mapped" rather than a bare "no bias".
+    push("WAITING_FOR_BIAS", biasResult.reasonCode, lastBiasTime, biasResult.draw?.level ?? null);
     return { state: "WAITING_FOR_BIAS", transitions, setup: null };
   }
-  push("WAITING_FOR_LIQUIDITY_SWEEP", "HTF_BIAS_CONFIRMED", biasCandles[biasCandles.length - 1].openTime, null);
+  push("WAITING_FOR_LIQUIDITY_SWEEP", "HTF_BIAS_CONFIRMED", lastBiasTime, biasResult.draw?.level ?? null);
 
   const structureResult = walkStructure(structureCandles, direction, params);
   transitions.push(...structureResult.transitions);
@@ -311,10 +327,10 @@ export function runJeanfxDirection(
 
   // Target selection (spec S12): nearest unswept liquidity pool on the opposite side, R:R >= rrMinimum.
   const targetSide = direction === "LONG" ? "BUY_SIDE" : "SELL_SIDE";
-  const targetCandidates = [
-    ...buildTrackedPools(structureCandles, targetSide, params),
-    ...sessionHighLowPools(structureCandles, JEANFX_DEFAULT_SESSION_WINDOWS).filter((p) => p.side === targetSide),
-  ];
+  const lastStructureIndex = structureCandles.length - 1;
+  const targetCandidates = buildTrackedPools(structureCandles, targetSide, params).filter(
+    (p) => p.confirmedAtIndex <= lastStructureIndex,
+  );
 
   const entryPrice = confirmationCandle.close;
   const sweepExtreme = direction === "LONG" ? structureResult.activeSweep.sweepCandleLow : structureResult.activeSweep.sweepCandleHigh;
@@ -330,19 +346,27 @@ export function runJeanfxDirection(
     .filter((p) => (direction === "LONG" ? p.level > entryPrice : p.level < entryPrice))
     .sort((a, b) => (direction === "LONG" ? a.level - b.level : b.level - a.level));
 
-  let chosenTarget: LiquidityPool | null = null;
-  for (const candidate of validTargets) {
-    const risk = Math.abs(entryPrice - stop);
-    if (risk <= 0) continue;
-    const reward = Math.abs(candidate.level - entryPrice);
-    if (reward / risk >= params.rrMinimum) {
-      chosenTarget = candidate;
-      break;
-    }
+  // SOURCE RULE: "Targets are placed at the next liquidity pool." The target
+  // is therefore the NEXT (nearest) unswept opposing pool - full stop. The
+  // 1:3 minimum is a QUALITY GATE applied to that pool, not a search
+  // criterion: scanning past the next pool for a further one that happens to
+  // clear 3R would manufacture the R:R the source demands, and would also
+  // place the target at a level JeanFX never pointed at.
+  const riskDistance = Math.abs(entryPrice - stop);
+  if (riskDistance <= 0) {
+    push("INVALIDATED", "INVALID_STOP_DISTANCE", confirmationCandle.openTime, null);
+    return { state: "INVALIDATED", transitions, setup: null };
   }
 
+  const chosenTarget: LiquidityPool | null = validTargets[0] ?? null;
   if (!chosenTarget) {
-    push("INVALIDATED", "NO_VALID_TARGET_RR", confirmationCandle.openTime, null);
+    push("INVALIDATED", "NO_TARGET_LIQUIDITY", confirmationCandle.openTime, null);
+    return { state: "INVALIDATED", transitions, setup: null };
+  }
+
+  const achievableR = Math.abs(chosenTarget.level - entryPrice) / riskDistance;
+  if (achievableR < params.rrMinimum) {
+    push("INVALIDATED", "RR_BELOW_MINIMUM", confirmationCandle.openTime, chosenTarget.level);
     return { state: "INVALIDATED", transitions, setup: null };
   }
 
@@ -352,6 +376,8 @@ export function runJeanfxDirection(
   const setup: JeanfxSetup = {
     direction,
     instrumentId: structureCandles[0].instrumentId,
+    biasTimeframe: params.biasTimeframe,
+    biasDraw: biasResult.draw,
     sweep: structureResult.activeSweep,
     structureEvent: structureResult.activeStructureEvent,
     fvg,

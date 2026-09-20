@@ -1,5 +1,18 @@
 import type { AssignmentInput, DataRequirement, MarketDataProvider } from "./orchestrator-types";
-import type { CanonicalCandle, Timeframe } from "./types";
+import type { CanonicalCandle, StrategyContract, Timeframe } from "./types";
+
+/**
+ * The timeframes an assignment ACTUALLY needs.
+ *
+ * Prefers the strategy's parameter-aware resolver over its static metadata,
+ * so a configuration-dependent timeframe (e.g. JeanFX M30 vs H1 bias) causes
+ * the matching candles to be fetched rather than silently receiving the
+ * metadata default.
+ */
+export function resolveTimeframesFor(strategy: StrategyContract, parameters: Record<string, unknown>): Timeframe[] {
+  const resolved = strategy.resolveRequiredTimeframes?.(parameters);
+  return resolved && resolved.length > 0 ? resolved : strategy.metadata.requiredTimeframes;
+}
 
 /**
  * Requirements union (Prompt 3 S28): assignments × instruments produces a
@@ -13,7 +26,7 @@ export function buildEvaluationPlan(assignments: AssignmentInput[]): DataRequire
   const seen = new Map<string, DataRequirement>();
   for (const assignment of assignments) {
     for (const instrumentId of assignment.instrumentIds) {
-      for (const timeframe of assignment.strategy.metadata.requiredTimeframes) {
+      for (const timeframe of resolveTimeframesFor(assignment.strategy, assignment.parameters)) {
         const key = `${instrumentId}::${timeframe}`;
         if (!seen.has(key)) seen.set(key, { instrumentId, timeframe });
       }

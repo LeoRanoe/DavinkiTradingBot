@@ -1,7 +1,7 @@
 import { checkStrategyCompatibility } from "./compatibility";
 import { applyPortfolioRisk, NO_CORRELATION_MODELING, type CorrelationPolicy, type PortfolioLimits, type RejectedOpportunity } from "./portfolio-risk";
 import { resolveConflicts, type ConflictPolicy, type ConflictResolutionResult } from "./conflict";
-import { buildEvaluationPlan, distributeMarketData, loadMarketData } from "./evaluation-plan";
+import { buildEvaluationPlan, distributeMarketData, loadMarketData, resolveTimeframesFor } from "./evaluation-plan";
 import type { AssignmentInput, MarketDataProvider, PortfolioState, VenueCapabilities } from "./orchestrator-types";
 import type { EvaluationError, Instrument, Opportunity, ScanObservability, StrategyContext, TradingSession } from "./types";
 
@@ -99,7 +99,7 @@ export async function runOrchestrator(input: OrchestratorInput): Promise<Orchest
         continue;
       }
 
-      const candlesByTimeframe = distributeMarketData(loaded, instrumentId, assignment.strategy.metadata.requiredTimeframes);
+      const candlesByTimeframe = distributeMarketData(loaded, instrumentId, resolveTimeframesFor(assignment.strategy, assignment.parameters));
       const availableHistoryBars = Object.fromEntries(
         Object.entries(candlesByTimeframe).map(([tf, candles]) => [tf, (candles ?? []).filter((c) => c.isClosed).length]),
       );

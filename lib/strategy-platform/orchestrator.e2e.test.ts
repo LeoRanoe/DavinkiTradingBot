@@ -41,7 +41,18 @@ const generousLimits: PortfolioLimits = { maxTotalOpenRiskPct: 1, maxRiskPerInst
 const jeanfxForTest = {
   metadata: { ...jeanfxV1BuiltInStrategy.metadata, minimumHistoryRequirements: { H1: 210, M15: 40, M5: 2 } },
   evaluate: jeanfxV1BuiltInStrategy.evaluate,
+  // The real resolver, so this exercises configuration-driven timeframe
+  // selection end to end rather than the static metadata list.
+  resolveRequiredTimeframes: jeanfxV1BuiltInStrategy.resolveRequiredTimeframes,
 };
+
+/**
+ * The fixture supplies H1 bias candles, so these assignments select the
+ * SELECTIVE (H1 bias) profile. With resolveRequiredTimeframes wired up this
+ * is what actually causes H1 to be fetched - selecting ACTIVE here would
+ * correctly fetch M30 and find no data, rather than silently reusing H1.
+ */
+const JEANFX_H1_PARAMS = { profile: "JEANFX_GOLD_SELECTIVE" as const };
 
 function jeanfxMarketData() {
   const structure = bullishStructureCandles();
@@ -59,7 +70,7 @@ function makeAssignment(overrides: Partial<AssignmentInput>): AssignmentInput {
     strategyVersionId: "v-1",
     strategyDefinitionId: "jeanfx-v1",
     strategy: jeanfxForTest,
-    parameters: {},
+    parameters: { ...JEANFX_H1_PARAMS },
     instrumentIds: ["BTCUSDT"],
     mode: "PAPER",
     priority: 100,

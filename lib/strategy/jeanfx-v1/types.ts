@@ -88,6 +88,10 @@ export type JeanfxStateTransition = {
 export type JeanfxSetup = {
   direction: Direction;
   instrumentId: string;
+  /** The bias timeframe this setup was actually evaluated on (M30 Active / H1 Selective) - recorded so attribution can never disagree with the data that was loaded. */
+  biasTimeframe: "H1" | "M30";
+  /** The liquidity draw that produced the HTF bias, per the source's Daily Bias Framework. */
+  biasDraw: LiquidityPool | null;
   sweep: Sweep;
   structureEvent: StructureEvent;
   fvg: FairValueGap;
