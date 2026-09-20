@@ -135,3 +135,51 @@ for the exact next action.
   EFFECTIVE execution policy and the research day, and never to display a
   DRAFT strategy as PAPER_APPROVED.
 - [x] 270 -> 334 tests. Strategy V1 remains DRAFT; LIVE remains disabled.
+
+## JeanFX Gold — source-fidelity pass (this run)
+
+Authoritative source: `JeanFX_Final_Complete` (21pp). Full rule-by-rule trace
+in `docs/strategies/jeanfx-source-fidelity-matrix.md`.
+
+- [x] Replaced the EMA50/EMA200 HTF bias with the source's liquidity-draw
+  rule. No EMA is consulted for JeanFX bias anywhere; a regression test
+  asserts it.
+- [x] Made configuration-dependent timeframes drive the actual fetch
+  (`resolveRequiredTimeframes`). Selecting the M30 profile previously
+  received H1 candles while appearing to work.
+- [x] Unified the liquidity map over all three source-named kinds. Session
+  highs/lows were previously targets only, so JeanFX could not sweep the
+  liquidity the source says London goes after.
+- [x] Target is the NEXT liquidity pool; 1:3 is a quality gate on it, not a
+  search criterion. The previous scan-forward manufactured the required R:R.
+- [x] Risk bounded to the source's 0.5-1% server-side (was up to 5%), and an
+  invalid configuration now fails closed instead of falling back to defaults.
+- [x] Max 3 trades/session actually enforced, from durable trade records,
+  London and New York counted separately, overlap-safe, DST-safe.
+- [x] Removed the LONG-first array-order bias; contradictory opposing setups
+  are rejected rather than resolved arbitrarily.
+- [x] Gold made primary: XAU/USD profiles (Active M30 / Selective H1), METAL
+  asset class, LONDON_AND_NEW_YORK session default.
+- [x] partialExitPlan implemented as a labelled versioned SOURCE AMBIGUITY
+  (50% @ +1.5R then break-even) instead of `null`.
+- [x] Built the market-data provider abstraction, canonical instrument model
+  (`METAL:TWELVEDATA:XAU/USD`), Twelve Data XAU/USD adapter, Gold sizing and
+  bid/ask PAPER execution with spread, slippage and commission.
+- [x] 638 -> 690 tests. LIVE remains disabled at all three layers.
+
+### Blocked pending an external credential
+
+- [ ] Historical validation (12-24mo walk-forward), Gold PAPER activation,
+  and the dedicated JeanFX PAPER session. All require **`TWELVE_DATA_API_KEY`**
+  in Vercel; it is not set. No substitute feed is used and no result is
+  estimated. JeanFX therefore remains **RESEARCH_ONLY / SHADOW** — no
+  historical edge has been demonstrated either way.
+
+### Not started (deferred by agreement)
+
+- [ ] `/trading` control centre and the frontend operating surface
+  (strategy/config/assignment management, scanner controls, funnel,
+  positions, performance, risk, audit log, health).
+- [ ] Generic `app/api/jobs/scan-strategies` route, M5 idempotency keys,
+  position management loop, JeanFX PAPER attribution tables.
+- [ ] V1 AUTO-PAPER stand-down (V1 still opens new AUTO PAPER trades).
