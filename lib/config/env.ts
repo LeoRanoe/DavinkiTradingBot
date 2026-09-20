@@ -43,6 +43,9 @@ const optionalSchema = z.object({
   TELEGRAM_OWNER_USER_ID: optionalString(),
   TELEGRAM_CHAT_ID: optionalString(),
   TELEGRAM_WEBHOOK_SECRET: optionalString(),
+  // Gold / XAU-USD market data. Absent by default: the app must boot and
+  // run crypto strategies fine without it; only JeanFX Gold needs it.
+  TWELVE_DATA_API_KEY: optionalString(),
   BYBIT_DEMO_API_KEY: optionalString(),
   BYBIT_DEMO_API_SECRET: optionalString(),
   NEXT_PUBLIC_APP_URL: optionalUrl(),
